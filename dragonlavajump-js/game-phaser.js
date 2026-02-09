@@ -37,7 +37,8 @@
   var BOOST_POWER_H = (64 / 12) * REFERENCE_FPS * REFERENCE_FPS;
   var BOOST_POWER_V = (6 / 12) * REFERENCE_FPS * REFERENCE_FPS;
   var maxUpwardVy = -jumpStrength - 0.5 * REFERENCE_FPS;
-  var LAVA_BOUNCE_VY = -18;
+  // Stronger lava bounce (approx a jump or higher)
+  var LAVA_BOUNCE_VY = -jumpStrength * 1.1;
   var LAVA_DEATH_DURATION = 35 / REFERENCE_FPS;
 
   // --- RNG
@@ -650,16 +651,24 @@
       var p = this.platformsData[i];
       var rect = this.add.rectangle(p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, 0x8b5cf6);
       this.physics.add.existing(rect, true);
+      // One-way platforms: collide only on top so you can walk through ends
+      rect.body.checkCollision.down = false;
+      rect.body.checkCollision.left = false;
+      rect.body.checkCollision.right = false;
       this.platformGroup.add(rect);
       rect.setData("platformIndex", i);
       rect.setData("platformData", p);
       this.platformSprites.push(rect);
     }
 
-    // Lava zone (invisible overlap)
-    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, WORLD_H - 10, LEVEL_LENGTH, 40, 0xff4b3e, 0);
+    // Lava zone (physics) + visible lava strip
+    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, WORLD_H - 30, LEVEL_LENGTH, 60, 0xff4b3e, 0);
     this.physics.add.existing(this.lavaZone, true);
     this.lavaZone.body.updateFromGameObject = function () {};
+    this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, WORLD_H - 15, LEVEL_LENGTH, 30, 0xff4b3e, 1)
+      .setDepth(0);
+    // Keep a cached lava top for bounce positioning
+    this.lavaY = this.lavaZone.y - this.lavaZone.height / 2;
 
     // Goal
     this.goalZone = this.add.rectangle(
@@ -692,6 +701,7 @@
 
     // Slimes (dynamic bodies, no gravity - we animate in update)
     this.slimes = [];
+    this.slimeEyes = [];
     var slimeW = 22, slimeH = 18;
     for (var si = 0; si < this.slimeDefs.length; si++) {
       var def = this.slimeDefs[si];
@@ -702,6 +712,9 @@
       var delay = (typeof def.delay === "number" && def.delay > 0) ? def.delay : 60 + Math.random() * 120;
       var slime = this.add.rectangle(baseX + slimeW / 2, baseY + slimeH / 2, slimeW, slimeH, 0x4ade80);
       this.physics.add.existing(slime, false);
+      // Slightly shrink slime hitbox for fairer collisions
+      slime.body.setSize(slimeW - 6, slimeH - 4);
+      slime.body.setOffset(3, 2);
       slime.body.setAllowGravity(false);
       slime.body.setVelocity(0, 0);
       slime.setData("platformIndex", def.platformIndex);
@@ -713,22 +726,43 @@
       slime.setData("vy", 0);
       slime.setData("dead", false);
       this.slimes.push(slime);
+      // Cute slime eyes (purely visual)
+      var eyeOffsetX = 4;
+      var eyeY = -3;
+      var eye1 = this.add.rectangle(slime.x - eyeOffsetX, slime.y + eyeY, 3, 3, 0xffffff).setDepth(slime.depth + 1);
+      var eye2 = this.add.rectangle(slime.x + eyeOffsetX, slime.y + eyeY, 3, 3, 0xffffff).setDepth(slime.depth + 1);
+      this.slimeEyes.push({ body: slime, eye1: eye1, eye2: eye2 });
     }
 
     // Bats
     this.bats = [];
+    this.batParts = [];
     for (var bi = 0; bi < this.batDefs.length; bi++) {
       var bdef = this.batDefs[bi];
-      var bat = this.add.rectangle(bdef.x + BAT_W / 2, bdef.y + BAT_H / 2, BAT_W, BAT_H, 0x1e1e28);
+      // Bright body color so they stand out from the dark background
+      var bat = this.add.rectangle(bdef.x + BAT_W / 2, bdef.y + BAT_H / 2, BAT_W, BAT_H, 0xff6b6b);
       this.physics.add.existing(bat, false);
       bat.body.setAllowGravity(false);
       bat.body.setVelocity(0, 0);
       bat.setData("rng", makeRng(bdef.rngSeed != null ? bdef.rngSeed : bi));
+      bat.setData("vx", 0);
+      bat.setData("vy", 0);
       this.bats.push(bat);
+      // Cute bat wings + eyes (visual only)
+      var wingSpan = 10;
+      var wingY = 0;
+      var leftWing = this.add.rectangle(bat.x - wingSpan, bat.y + wingY, BAT_W / 2, BAT_H / 2, 0x9ca3af).setDepth(bat.depth - 1);
+      var rightWing = this.add.rectangle(bat.x + wingSpan, bat.y + wingY, BAT_W / 2, BAT_H / 2, 0x9ca3af).setDepth(bat.depth - 1);
+      var eyeOffset = 3;
+      var eyeYb = -3;
+      var eyeL = this.add.rectangle(bat.x - eyeOffset, bat.y + eyeYb, 2, 2, 0xffffff).setDepth(bat.depth + 1);
+      var eyeR = this.add.rectangle(bat.x + eyeOffset, bat.y + eyeYb, 2, 2, 0xffffff).setDepth(bat.depth + 1);
+      this.batParts.push({ body: bat, leftWing: leftWing, rightWing: rightWing, eyeL: eyeL, eyeR: eyeR });
     }
 
     // Crawlers
     this.crawlers = [];
+    this.crawlerEyes = [];
     for (var ci = 0; ci < this.crawlerDefs.length; ci++) {
       var cdef = this.crawlerDefs[ci];
       var cplat = this.platformsData[cdef.platformIndex];
@@ -741,9 +775,15 @@
       crawler.setData("offset", cdef.offset);
       crawler.setData("dead", false);
       this.crawlers.push(crawler);
+      // Cute crawler eyes
+      var cEyeOffset = 3;
+      var cEyeY = -3;
+      var cEye1 = this.add.rectangle(crawler.x - cEyeOffset, crawler.y + cEyeY, 2, 2, 0xffffff).setDepth(crawler.depth + 1);
+      var cEye2 = this.add.rectangle(crawler.x + cEyeOffset, crawler.y + cEyeY, 2, 2, 0xffffff).setDepth(crawler.depth + 1);
+      this.crawlerEyes.push({ body: crawler, eye1: cEye1, eye2: cEye2 });
     }
 
-    // Stalactites (overlap zones - use rectangles)
+    // Stalactites (pointy triangles hanging from ceiling + rectangle hitbox)
     this.stalactites = [];
     for (var sti = 0; sti < this.stalactiteDefs.length; sti++) {
       var st = this.stalactiteDefs[sti];
@@ -751,10 +791,15 @@
       var sy = st.y;
       var sw = st.w || 24;
       var sh = st.length || 40;
-      var rect = this.add.rectangle(sx, sy + sh / 2, sw, sh, 0x3f2b63, 0);
+      // Invisible rectangular hitbox
+      var rect = this.add.rectangle(sx, sy + sh / 2, sw, sh, 0x000000, 0);
       this.physics.add.existing(rect, true);
       rect.body.updateFromGameObject = function () {};
       this.stalactites.push(rect);
+      // Visible pointy stalactite graphic
+      var gfx = this.add.graphics().setDepth(1);
+      gfx.fillStyle(0x3f2b63, 1);
+      gfx.fillTriangle(sx - sw / 2, sy, sx + sw / 2, sy, sx, sy + sh);
     }
 
     // Dots
@@ -786,18 +831,32 @@
 
     // Items
     this.itemZones = [];
+    this.itemVfx = [];
     for (var ii = 0; ii < this.itemDefs.length; ii++) {
       var it = this.itemDefs[ii];
-      var iz = this.add.rectangle(it.x + it.w / 2, it.y + it.h / 2, it.w, it.h, it.type === "fireTotem" ? 0xffb84d : 0xffb84d, 0.5);
+      var iz = this.add.rectangle(it.x + it.w / 2, it.y + it.h / 2, it.w, it.h, 0xffffff, 0); // invisible hitbox
       this.physics.add.existing(iz, true);
       iz.body.updateFromGameObject = function () {};
       iz.setData("item", it);
       iz.setData("collected", false);
       this.itemZones.push(iz);
+      // Visuals for items
+      if (it.type === "lavaBounce") {
+        var orb = this.add.ellipse(it.x + it.w / 2, it.y + it.h / 2, it.w, it.h, 0xffb84d).setDepth(iz.depth + 1);
+        this.itemVfx.push({ zone: iz, type: "lavaBounce", sprite: orb });
+      } else if (it.type === "fireTotem") {
+        var base = this.add.rectangle(it.x + it.w / 2, it.y + it.h - 8, it.w - 8, 12, 0x5c4a3a).setDepth(iz.depth + 1);
+        var mid = this.add.rectangle(it.x + it.w / 2, it.y + it.h - 16, it.w - 12, 6, 0x6b5a4a).setDepth(iz.depth + 1);
+        var flame = this.add.ellipse(it.x + it.w / 2, it.y, it.w - 6, it.h - 6, 0xffb84d).setDepth(iz.depth + 2);
+        this.itemVfx.push({ zone: iz, type: "fireTotem", base: base, mid: mid, flame: flame });
+      }
     }
 
-    // Fire breath hitbox (created when breathing)
+    // Fire breath visuals (created when breathing)
     this.breathZone = null;
+    this.breathSprite = this.add.rectangle(this.player.x, this.player.y, BREATH_LEN, DRAGON_H - 8, 0xffb84d, 0.7)
+      .setVisible(false)
+      .setDepth(this.player.depth - 1);
 
     this.physics.add.collider(this.player, this.platformGroup, null, null, this);
     this.physics.add.overlap(this.player, this.lavaZone, this.onOverlapLava, null, this);
@@ -832,8 +891,11 @@
   GameScene.prototype.onOverlapLava = function (player, zone) {
     if (this.gameWon || this.isDyingInLava) return;
     if (this.lavaBounceTimer > 0) {
+      // Strong upward bounce and snap just above lava surface
       this.player.body.setVelocityY(LAVA_BOUNCE_VY);
-      this.player.y = this.lavaY - DRAGON_H - 2;
+      var lavaTop = this.lavaZone.y - this.lavaZone.height / 2;
+      this.lavaY = lavaTop;
+      this.player.y = lavaTop - 2 - DRAGON_H / 2;
       this.player.onGround = false;
       this.player.jumpsLeft = 1;
       this.player.boostAvailable = false;
@@ -911,9 +973,7 @@
   GameScene.prototype.onOverlapSlime = function (player, slime) {
     if (slime.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
-      slime.setData("dead", true);
-      slime.setVisible(false);
-      slime.body.checkCollision.none = true;
+      this.killSlime(slime);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
       return;
@@ -928,9 +988,7 @@
   GameScene.prototype.onOverlapCrawler = function (player, crawler) {
     if (crawler.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
-      crawler.setData("dead", true);
-      crawler.setVisible(false);
-      crawler.body.checkCollision.none = true;
+      this.killCrawler(crawler);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
       return;
@@ -940,6 +998,79 @@
 
   GameScene.prototype.onOverlapStalactite = function (player, st) {
     this.applyDeath();
+  };
+
+  // Simple death animations for monsters: shrink + fade, then disable collisions
+  GameScene.prototype.killSlime = function (slime) {
+    if (slime.getData("dead")) return;
+    slime.setData("dead", true);
+    slime.body.checkCollision.none = true;
+    // Hide eyes immediately
+    for (var i = 0; i < this.slimeEyes.length; i++) {
+      var info = this.slimeEyes[i];
+      if (info.body === slime) {
+        info.eye1.setVisible(false);
+        info.eye2.setVisible(false);
+      }
+    }
+    this.tweens.add({
+      targets: slime,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        slime.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killCrawler = function (crawler) {
+    if (crawler.getData("dead")) return;
+    crawler.setData("dead", true);
+    crawler.body.checkCollision.none = true;
+    // Hide eyes immediately
+    for (var i = 0; i < this.crawlerEyes.length; i++) {
+      var info = this.crawlerEyes[i];
+      if (info.body === crawler) {
+        info.eye1.setVisible(false);
+        info.eye2.setVisible(false);
+      }
+    }
+    this.tweens.add({
+      targets: crawler,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        crawler.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killBat = function (bat) {
+    // Find visual parts for this bat
+    var parts = null;
+    for (var i = 0; i < this.batParts.length; i++) {
+      if (this.batParts[i].body === bat) {
+        parts = this.batParts[i];
+        break;
+      }
+    }
+    var targets = parts
+      ? [bat, parts.leftWing, parts.rightWing, parts.eyeL, parts.eyeR]
+      : [bat];
+    this.tweens.add({
+      targets: targets,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        targets.forEach(function (t) { t.setVisible(false); });
+      }
+    });
   };
 
   GameScene.prototype.applyDeath = function () {
@@ -961,13 +1092,16 @@
     this.platformGroup.clear(true, true);
     this.platformSprites = [];
     for (var j = 0; j < this.platformsData.length; j++) {
-      var p = this.platformsData[j];
-      var rect = this.add.rectangle(p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, 0x8b5cf6);
-      this.physics.add.existing(rect, true);
-      this.platformGroup.add(rect);
-      rect.setData("platformIndex", j);
-      rect.setData("platformData", p);
-      this.platformSprites.push(rect);
+      var p2 = this.platformsData[j];
+      var rect2 = this.add.rectangle(p2.x + p2.w / 2, p2.y + p2.h / 2, p2.w, p2.h, 0x8b5cf6);
+      this.physics.add.existing(rect2, true);
+      rect2.body.checkCollision.down = false;
+      rect2.body.checkCollision.left = false;
+      rect2.body.checkCollision.right = false;
+      this.platformGroup.add(rect2);
+      rect2.setData("platformIndex", j);
+      rect2.setData("platformData", p2);
+      this.platformSprites.push(rect2);
     }
     var startX, startY;
     if (this.lastCheckpointIndex >= 0 && this.checkpointDefs[this.lastCheckpointIndex]) {
@@ -1009,13 +1143,23 @@
       slime.y = baseY + slimeH / 2;
       slime.body.setVelocity(0, 0);
       slime.setData("baseX", baseX + slimeW / 2);
-      slime.setData("baseY", baseY + slimeH / 2);
+      slime.setData("baseY", baseY + slimeW / 2);
       slime.setData("state", "waiting");
       slime.setData("timer", (60 + Math.random() * 120) / REFERENCE_FPS);
       slime.setData("vy", 0);
       slime.setData("dead", false);
       slime.setVisible(true);
+      slime.scaleX = 1;
+      slime.scaleY = 1;
+      slime.alpha = 1;
       slime.body.checkCollision.none = false;
+    }
+    // Reset slime eyes
+    for (var se = 0; se < this.slimeEyes.length; se++) {
+      var seInfo = this.slimeEyes[se];
+      var sb = seInfo.body;
+      seInfo.eye1.setVisible(!sb.getData("dead"));
+      seInfo.eye2.setVisible(!sb.getData("dead"));
     }
     for (var bi = 0; bi < this.bats.length; bi++) {
       var bat = this.bats[bi];
@@ -1023,6 +1167,27 @@
       bat.x = bdef.x + BAT_W / 2;
       bat.y = bdef.y + BAT_H / 2;
       bat.body.setVelocity(0, 0);
+      bat.setVisible(true);
+      bat.scaleX = 1;
+      bat.scaleY = 1;
+      bat.alpha = 1;
+    }
+    // Reset bat parts
+    for (var bp = 0; bp < this.batParts.length; bp++) {
+      var bInfo = this.batParts[bp];
+      var bb = bInfo.body;
+      bInfo.leftWing.setVisible(true);
+      bInfo.rightWing.setVisible(true);
+      bInfo.eyeL.setVisible(true);
+      bInfo.eyeR.setVisible(true);
+      bInfo.leftWing.x = bb.x - 10;
+      bInfo.leftWing.y = bb.y;
+      bInfo.rightWing.x = bb.x + 10;
+      bInfo.rightWing.y = bb.y;
+      bInfo.eyeL.x = bb.x - 3;
+      bInfo.eyeL.y = bb.y - 3;
+      bInfo.eyeR.x = bb.x + 3;
+      bInfo.eyeR.y = bb.y - 3;
     }
     for (var ci = 0; ci < this.crawlers.length; ci++) {
       var crawler = this.crawlers[ci];
@@ -1036,6 +1201,17 @@
       crawler.setData("dead", false);
       crawler.setVisible(true);
       crawler.body.checkCollision.none = false;
+    }
+    // Reset crawler eyes
+    for (var ce = 0; ce < this.crawlerEyes.length; ce++) {
+      var cInfo = this.crawlerEyes[ce];
+      var cb = cInfo.body;
+      cInfo.eye1.setVisible(!cb.getData("dead"));
+      cInfo.eye2.setVisible(!cb.getData("dead"));
+      cInfo.eye1.x = cb.x - 3;
+      cInfo.eye1.y = cb.y - 3;
+      cInfo.eye2.x = cb.x + 3;
+      cInfo.eye2.y = cb.y - 3;
     }
 
     this.lavaBounceItemCollected = false;
@@ -1103,9 +1279,17 @@
 
     if (this.isDyingInLava) {
       this.lavaDeathTimer -= dt;
-      this.player.y += 36 * dt;
+      // Slow sink into lava with fade-out
+      this.player.y += 20 * dt;
       this.player.body.setVelocity(this.player.body.velocity.x * 0.9, 0);
-      if (this.lavaDeathTimer <= 0) this.applyDeath();
+      var tDeath = 1 - (this.lavaDeathTimer / LAVA_DEATH_DURATION);
+      if (tDeath < 0) tDeath = 0;
+      if (tDeath > 1) tDeath = 1;
+      this.player.alpha = 1 - tDeath;
+      if (this.lavaDeathTimer <= 0) {
+        this.applyDeath();
+        this.player.alpha = 1;
+      }
       return;
     }
 
@@ -1116,7 +1300,7 @@
     }
     if (this.timerStarted) this.currentTime = (time / 1000) - this.startTime;
 
-    // Player movement - fixed hitbox: we only change velocity and sprite flip
+    // Player movement - fixed hitbox: we only change velocity
     this.player.body.setVelocity(0, this.player.body.velocity.y);
     if (keys.left) {
       this.player.body.setVelocityX(-moveSpeed);
@@ -1125,6 +1309,12 @@
     if (keys.right) {
       this.player.body.setVelocityX(moveSpeed);
       this.player.facing = 1;
+    }
+    // Change player color when fire shield is active
+    if (this.fireBreathsLeft > 0 || this.fireTotemCollected) {
+      this.player.fillColor = 0xb85c20;
+    } else {
+      this.player.fillColor = 0x4a9b4a;
     }
 
     var onGround = this.player.body.blocked.down || this.player.body.touching.down;
@@ -1164,14 +1354,18 @@
       var breathW = BREATH_LEN;
       var breathY = this.player.y;
       var breathH = DRAGON_H - 8;
+      // Visual flame
+      this.breathSprite.setVisible(true);
+      this.breathSprite.width = breathW;
+      this.breathSprite.height = breathH;
+      this.breathSprite.x = breathX;
+      this.breathSprite.y = breathY + breathH / 2;
       for (var si = 0; si < this.slimes.length; si++) {
         var s = this.slimes[si];
         if (s.getData("dead")) continue;
         if (breathX - breathW / 2 < s.x + 11 && breathX + breathW / 2 > s.x - 11 &&
             breathY < s.y + 9 && breathY + breathH > s.y - 9) {
-          s.setData("dead", true);
-          s.setVisible(false);
-          s.body.checkCollision.none = true;
+          this.killSlime(s);
         }
       }
       for (var cj = 0; cj < this.crawlers.length; cj++) {
@@ -1179,12 +1373,21 @@
         if (c.getData("dead")) continue;
         if (breathX - breathW / 2 < c.x + CRAWLER_W / 2 && breathX + breathW / 2 > c.x - CRAWLER_W / 2 &&
             breathY < c.y + CRAWLER_H / 2 && breathY + breathH > c.y - CRAWLER_H / 2) {
-          c.setData("dead", true);
-          c.setVisible(false);
-          c.body.checkCollision.none = true;
+          this.killCrawler(c);
+        }
+      }
+      // Bats can also be burned by flame
+      for (var bb = 0; bb < this.bats.length; bb++) {
+        var bat = this.bats[bb];
+        if (!bat.visible) continue;
+        if (breathX - breathW / 2 < bat.x + BAT_W / 2 && breathX + breathW / 2 > bat.x - BAT_W / 2 &&
+            breathY < bat.y + BAT_H / 2 && breathY + breathH > bat.y - BAT_H / 2) {
+          this.killBat(bat);
         }
       }
       this.breathActiveTime -= dt;
+    } else {
+      this.breathSprite.setVisible(false);
     }
 
     // Slimes update
@@ -1219,24 +1422,64 @@
         }
       }
     }
+    // Keep slime eyes attached
+    for (var se = 0; se < this.slimeEyes.length; se++) {
+      var seInfo = this.slimeEyes[se];
+      var sb = seInfo.body;
+      if (sb.getData("dead")) {
+        seInfo.eye1.setVisible(false);
+        seInfo.eye2.setVisible(false);
+        continue;
+      }
+      seInfo.eye1.x = sb.x - 4;
+      seInfo.eye1.y = sb.y - 3;
+      seInfo.eye2.x = sb.x + 4;
+      seInfo.eye2.y = sb.y - 3;
+    }
 
-    // Bats update (wander; clamp to world)
+    // Bats update (wander erratically, gently attracted to player)
     var xMin = 50 + BAT_W / 2, xMax = LEVEL_LENGTH - 50 - BAT_W / 2;
     var yMin = 80 + BAT_H / 2, yMax = WORLD_H - 80 - BAT_H / 2;
     for (var bi = 0; bi < this.bats.length; bi++) {
       var bat = this.bats[bi];
       var rng = bat.getData("rng");
-      var vx = bat.body.velocity.x + (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
-      var vy = bat.body.velocity.y + (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
+      var vx = bat.getData("vx") || 0;
+      var vy = bat.getData("vy") || 0;
+      // Random wander
+      vx += (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
+      vy += (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
+      // Gentle attraction to player when nearby
+      var dx = this.player.x - bat.x;
+      var dy = this.player.y - bat.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 220 && dist > 1) {
+        var attract = (220 - dist) / 220; // stronger when closer
+        vx += (dx / dist) * BAT_WANDER_STRENGTH * attract * dt;
+        vy += (dy / dist) * BAT_WANDER_STRENGTH * attract * dt;
+      }
       var speed = Math.sqrt(vx * vx + vy * vy);
       if (speed > BAT_MAX_SPEED) {
         vx = (vx / speed) * BAT_MAX_SPEED;
         vy = (vy / speed) * BAT_MAX_SPEED;
       }
-      bat.body.setVelocity(vx, vy);
-      bat.x = Phaser.Math.Clamp(bat.x, xMin, xMax);
-      bat.y = Phaser.Math.Clamp(bat.y, yMin, yMax);
+      bat.setData("vx", vx);
+      bat.setData("vy", vy);
+      bat.x = Phaser.Math.Clamp(bat.x + vx * dt, xMin, xMax);
+      bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
       bat.body.updateFromGameObject();
+    }
+    // Keep bat parts attached
+    for (var bp = 0; bp < this.batParts.length; bp++) {
+      var bInfo = this.batParts[bp];
+      var bb = bInfo.body;
+      bInfo.leftWing.x = bb.x - 10;
+      bInfo.leftWing.y = bb.y;
+      bInfo.rightWing.x = bb.x + 10;
+      bInfo.rightWing.y = bb.y;
+      bInfo.eyeL.x = bb.x - 3;
+      bInfo.eyeL.y = bb.y - 3;
+      bInfo.eyeR.x = bb.x + 3;
+      bInfo.eyeR.y = bb.y - 3;
     }
 
     // Crawlers update
@@ -1251,6 +1494,52 @@
       var pos = crawlerPerimeterPosition(cplat, offset);
       crawler.x = pos.cx;
       crawler.y = pos.cy;
+    }
+    // Keep crawler eyes attached
+    for (var ce = 0; ce < this.crawlerEyes.length; ce++) {
+      var cInfo = this.crawlerEyes[ce];
+      var cb = cInfo.body;
+      if (cb.getData("dead")) {
+        cInfo.eye1.setVisible(false);
+        cInfo.eye2.setVisible(false);
+        continue;
+      }
+      cInfo.eye1.x = cb.x - 3;
+      cInfo.eye1.y = cb.y - 3;
+      cInfo.eye2.x = cb.x + 3;
+      cInfo.eye2.y = cb.y - 3;
+    }
+
+    // Animate item VFX (orb pulse, flame wobble), hide when collected
+    if (this.itemVfx && this.itemVfx.length) {
+      var t = time / 1000;
+      for (var iv = 0; iv < this.itemVfx.length; iv++) {
+        var v = this.itemVfx[iv];
+        var zone = v.zone;
+        var collected = zone.getData("collected");
+        if (v.type === "lavaBounce") {
+          if (collected) {
+            v.sprite.setVisible(false);
+            continue;
+          }
+          var pulse = 0.9 + 0.15 * Math.sin(t * 3);
+          v.sprite.setVisible(true);
+          v.sprite.setScale(pulse);
+        } else if (v.type === "fireTotem") {
+          var base = v.base, mid = v.mid, flame = v.flame;
+          if (collected) {
+            base.setVisible(false);
+            mid.setVisible(false);
+            flame.setVisible(false);
+            continue;
+          }
+          base.setVisible(true);
+          mid.setVisible(true);
+          flame.setVisible(true);
+          var wobble = 0.9 + 0.12 * Math.sin(t * 4);
+          flame.setScale(1, wobble);
+        }
+      }
     }
 
     // Drop platforms
@@ -1296,6 +1585,27 @@
       this.player.boostAvailable = true;
     } else {
       this.player.onGround = false;
+    }
+
+    // Simple motion trail behind the dragon
+    if (!this.trailGraphics) {
+      this.trailGraphics = this.add.graphics().setDepth(this.player.depth - 1);
+      this.trail = [];
+    }
+    var speedMag = Math.sqrt(this.player.body.velocity.x * this.player.body.velocity.x + this.player.body.velocity.y * this.player.body.velocity.y);
+    if (speedMag > 80 || this.player.boostFramesLeft > 0) {
+      this.trail.push({ x: this.player.x, y: this.player.y });
+      if (this.trail.length > 14) this.trail.shift();
+    } else {
+      this.trail.length = 0;
+    }
+    this.trailGraphics.clear();
+    for (var ti = 0; ti < this.trail.length; ti++) {
+      var tInfo = this.trail[ti];
+      var alpha = 0.08 + (ti / this.trail.length) * 0.35;
+      var color = (this.fireBreathsLeft > 0 || this.fireTotemCollected) ? 0xffb84d : 0x4a9b4a;
+      this.trailGraphics.fillStyle(color, alpha);
+      this.trailGraphics.fillRect(tInfo.x - DRAGON_W / 2, tInfo.y - DRAGON_H / 2, DRAGON_W, DRAGON_H);
     }
 
     this.updateHUD();
@@ -1382,14 +1692,35 @@
       }
     });
 
-    // On-screen buttons
+    // On-screen buttons (mobile-friendly, stable press/hold)
     function bindBtn(id, keyName) {
       var btn = document.getElementById(id);
       if (!btn) return;
-      btn.addEventListener("pointerdown", function (e) { e.preventDefault(); window.__dragonKeys[keyName] = true; });
-      btn.addEventListener("pointerup", function (e) { e.preventDefault(); window.__dragonKeys[keyName] = false; });
-      btn.addEventListener("pointerleave", function () { window.__dragonKeys[keyName] = false; });
-      btn.addEventListener("pointercancel", function () { window.__dragonKeys[keyName] = false; });
+      var activePointerId = null;
+
+      btn.addEventListener("pointerdown", function (e) {
+        e.preventDefault();
+        activePointerId = e.pointerId;
+        window.__dragonKeys[keyName] = true;
+        if (btn.setPointerCapture) {
+          try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+      });
+
+      function clearForPointer(e) {
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
+        e.preventDefault();
+        window.__dragonKeys[keyName] = false;
+        activePointerId = null;
+        if (btn.releasePointerCapture) {
+          try { btn.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener("pointerup", clearForPointer);
+      btn.addEventListener("pointercancel", clearForPointer);
+      // We intentionally do NOT clear on pointerleave so minor thumb drift
+      // doesn't stop movement; release happens only on up/cancel.
     }
     bindBtn("btnLeft", "left");
     bindBtn("btnRight", "right");
