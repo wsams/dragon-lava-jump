@@ -872,6 +872,17 @@
     this.cameras.main.setBounds(0, 0, LEVEL_LENGTH, WORLD_H);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(0, 0);
+    // On smaller screens, zoom out a bit so you can see more of the level
+    try {
+      var vw = window.innerWidth || 640;
+      var vh = window.innerHeight || 360;
+      // Base zoom of 1 on desktop; reduce to show more world on shorter viewports
+      var zoom = 1;
+      if (vh < 800) {
+        zoom = Math.max(0.7, vh / 600);
+      }
+      this.cameras.main.setZoom(zoom);
+    } catch (_) {}
 
     this.hudText = this.add.text(16, 14, "", { fontSize: "14px", color: "#fff", backgroundColor: "#00000088" }).setScrollFactor(0).setDepth(100);
     if (this.hudText.setPadding) this.hudText.setPadding(8, 4);
