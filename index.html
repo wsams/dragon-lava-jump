@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/dragon.ico">
+  <title>Dragon Lava Run</title>
+  <link rel="stylesheet" href="dragonlavajump-css/styles.css">
+</head>
+<body>
+
+  <div id="menu">
+    <select id="levelSelect"></select>
+    <button id="newLevelBtn">New Level</button>
+    <button id="shareBtn" type="button">Share</button>
+  </div>
+
+  <div id="game-container">
+    <div id="game-wrapper">
+      <!-- Phaser 3 creates and mounts the game canvas here -->
+      <div id="phaser-game"></div>
+      <div id="winOverlay" style="display: none;">
+        <div class="win-panel">
+          <h2 class="win-title">You Win!</h2>
+          <p class="win-stat"><span id="winTime">Time: 0.00s</span></p>
+          <p class="win-stat">Dots: <span id="winDots">0/30</span></p>
+          <p class="win-stat"><span id="winBest">Best: --</span></p>
+          <div class="win-actions">
+            <button type="button" id="winNextLevelBtn">Next level →</button>
+            <button type="button" id="winReplayBtn">Replay</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="onscreen-controls">
+      <div class="move-group">
+        <div class="btn-wrap"><button type="button" id="btnLeft" aria-label="Move left"></button><span class="btn-label">Left</span></div>
+        <div class="btn-wrap"><button type="button" id="btnRight" aria-label="Move right"></button><span class="btn-label">Right</span></div>
+      </div>
+      <div class="action-group">
+        <div class="btn-wrap"><button type="button" id="btnBreath" aria-label="Fire breath"></button><span class="btn-label">Breath</span></div>
+        <div class="btn-wrap"><button type="button" id="btnJump" aria-label="Jump"></button><span class="btn-label">Jump</span></div>
+        <div class="btn-wrap"><button type="button" id="btnBoost" aria-label="Boost"></button><span class="btn-label">Boost</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="legend">
+    <b>Controls:</b> ← → Move &nbsp;|&nbsp; Space = Jump (double jump in air) &nbsp;|&nbsp; F = Boost (once per jump, in air) &nbsp;|&nbsp; G = Fire breath &nbsp;• &nbsp; Or use the onscreen controls.
+    <br>
+    <b>Goal:</b> Reach the golden pillar. Collect all 30 dots. Avoid lava (death). Don't touch slimes, bats, crawlers, or stalactites (reset). Touch poles to set checkpoints; collect the orange orb for a short lava bounce; touch the fire totem for unlimited flame (G) until you're hit. Some platforms drop after you stand on them.
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script src="dragonlavajump-js/game-phaser.js"></script>
+</body>
+</html>

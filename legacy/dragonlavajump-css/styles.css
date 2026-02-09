@@ -41,16 +41,6 @@ select, #menu button {
   max-width: 100%;
   max-height: 100%;
 }
-#phaser-game {
-  display: block;
-  border: 3px solid rgba(255,255,255,0.33);
-  border-radius: 10px;
-  box-shadow: 0 0 20px rgba(0,0,0,0.5);
-}
-#phaser-game canvas {
-  display: block;
-  border-radius: 8px;
-}
 #winOverlay {
   position: absolute;
   inset: 0;
@@ -105,6 +95,17 @@ select, #menu button {
 }
 .win-actions #winNextLevelBtn:hover {
   background: linear-gradient(to bottom, #fbbf24, #ea580c);
+}
+#game {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+  aspect-ratio: 640 / 360;
+  background: linear-gradient(#7fd0ff, #e0f7ff);
+  border: 3px solid #ffffff55;
+  border-radius: 10px;
+  box-shadow: 0 0 20px #00000088;
 }
 #onscreen-controls {
   display: flex;
