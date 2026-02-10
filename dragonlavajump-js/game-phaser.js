@@ -825,11 +825,24 @@
     this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.8 }) : null;
     this.music = null;
     if (this.cache.audio.exists("music")) {
-      this.music = this.sound.add("music", { volume: 0.35, loop: true });
-      if (isMusicEnabled()) {
-        this.music.play();
+      // Reuse a single music instance so it doesn't stack across scene restarts.
+      var existingMusic = (typeof this.sound.get === "function") ? this.sound.get("music") : null;
+      if (existingMusic) {
+        this.music = existingMusic;
+        this.music.setLoop(true);
+        // Ensure mute state matches current setting; don't restart if already playing.
+        var enableMusic = isMusicEnabled();
+        this.music.setMute(!enableMusic);
+        if (enableMusic && !this.music.isPlaying) {
+          this.music.play();
+        }
       } else {
-        this.music.setMute(true);
+        this.music = this.sound.add("music", { volume: 0.35, loop: true });
+        if (isMusicEnabled()) {
+          this.music.play();
+        } else {
+          this.music.setMute(true);
+        }
       }
     }
 
@@ -932,7 +945,8 @@
     for (var bi = 0; bi < this.batDefs.length; bi++) {
       var bdef = this.batDefs[bi];
       // Bright body color so they stand out from the dark background
-      var bat = this.add.rectangle(bdef.x + BAT_W / 2, bdef.y + BAT_H / 2, BAT_W, BAT_H, 0xff6b6b);
+      var bat = this.add.rectangle(bdef.x + BAT_W / 2, bdef.y + BAT_H / 2, BAT_W, BAT_H, 0xff6b6b)
+        .setDepth(50);
       this.physics.add.existing(bat, false);
       bat.body.setAllowGravity(false);
       bat.body.setVelocity(0, 0);
@@ -2129,6 +2143,19 @@
         }
       });
     }
+
+    // Mobile audio unlock: resume Web Audio on first user interaction
+    window.addEventListener("pointerdown", function unlockAudio() {
+      var game = window.__dragonGame;
+      if (game && game.sound && game.sound.context && game.sound.context.state === "suspended") {
+        try { game.sound.context.resume(); } catch (e) {}
+      }
+      // Phaser also exposes an explicit unlock helper on some backends
+      if (game && game.sound && typeof game.sound.unlock === "function") {
+        try { game.sound.unlock(); } catch (e2) {}
+      }
+      window.removeEventListener("pointerdown", unlockAudio);
+    });
 
     if (!loadLevelFromHash()) {
       var select = document.getElementById("levelSelect");
