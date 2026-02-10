@@ -745,6 +745,19 @@
     this.currentDifficulty = data.currentDifficulty;
     this.bestScore = data.bestScore != null ? data.bestScore : Infinity;
 
+    // Log this level load into played history (even before completion)
+    appendProfileRun({
+      username: getProfileUsername(),
+      timestamp: new Date().toISOString(),
+      levelId: this.currentLevelID || null,
+      seed: this.currentLevelSeed || null,
+      difficulty: this.currentDifficulty != null ? this.currentDifficulty : null,
+      timeSeconds: null,
+      dotsCollected: 0,
+      dotsTotal: NUM_DOTS
+    });
+    if (typeof window.__dragonPopulatePlayedDropdown === "function") window.__dragonPopulatePlayedDropdown();
+
     this.lastCheckpointIndex = -1;
     this.lives = LIVES_START;
     this.lavaY = WORLD_H - 20;
@@ -1537,6 +1550,9 @@
       this.lavaBounceBounces = 0;
     } else {
       this.player.timeInAir += dt;
+      // Safety clamp: once we're in the air, we should never
+      // have more than one extra jump available (double jump).
+      if (this.player.jumpsLeft > 1) this.player.jumpsLeft = 1;
     }
 
     if (keys.jump && onGround) {
