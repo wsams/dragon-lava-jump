@@ -597,6 +597,39 @@
   GameScene.prototype = Object.create(Phaser.Scene.prototype);
   GameScene.prototype.constructor = GameScene;
 
+  GameScene.prototype.preload = function () {
+    // Audio assets (all optional; game still runs if a file is missing).
+    // Put files in assets/audio/ with these names/formats:
+    // - jump.mp3          (short, snappy jump)
+    // - death.mp3         (dragon death)
+    // - shield-loss.mp3   (lose fire totem / lava orb on hit)
+    // - lava.mp3          (lava splash / sizzle)
+    // - bat.mp3           (bat chitter)
+    // - crawler.mp3       (crawler slide)
+    // - slime.mp3         (slime jump)
+    // - breath.mp3        (fire breath)
+    // - platform-step.mp3 (stepping onto drop platform)
+    // - platform-fall.mp3 (drop platform falling)
+    // - win.mp3           (reach goal)
+    // - music.mp3         (looping background track)
+    // - boost.mp3         (air boost)
+    // - dot.mp3           (collecting a dot)
+    this.load.audio("jump", "assets/audio/jump.mp3");
+    this.load.audio("death", "assets/audio/death.mp3");
+    this.load.audio("shieldLoss", "assets/audio/shield-loss.mp3");
+    this.load.audio("lavaHit", "assets/audio/lava.mp3");
+    this.load.audio("batChitter", "assets/audio/bat.mp3");
+    this.load.audio("crawlerSlide", "assets/audio/crawler.mp3");
+    this.load.audio("slimeJump", "assets/audio/slime.mp3");
+    this.load.audio("breath", "assets/audio/breath.mp3");
+    this.load.audio("platformStep", "assets/audio/platform-step.mp3");
+    this.load.audio("platformFall", "assets/audio/platform-fall.mp3");
+    this.load.audio("win", "assets/audio/win.mp3");
+    this.load.audio("music", "assets/audio/music.mp3");
+    this.load.audio("boost", "assets/audio/boost.mp3");
+    this.load.audio("dot", "assets/audio/dot.mp3");
+  };
+
   GameScene.prototype.create = function () {
     var data = window.__dragonLevelData;
     if (!data) {
@@ -642,6 +675,26 @@
     this.dotsCollectedCount = 0;
     this.standingPlatformIndex = -1;
     this.cameraX = 0;
+
+    // Instantiate sounds if loaded
+    this.jumpSound = this.cache.audio.exists("jump") ? this.sound.add("jump", { volume: 0.5 }) : null;
+    this.deathSound = this.cache.audio.exists("death") ? this.sound.add("death", { volume: 0.7 }) : null;
+    this.shieldLossSound = this.cache.audio.exists("shieldLoss") ? this.sound.add("shieldLoss", { volume: 0.7 }) : null;
+    this.lavaHitSound = this.cache.audio.exists("lavaHit") ? this.sound.add("lavaHit", { volume: 0.8 }) : null;
+    this.batSound = this.cache.audio.exists("batChitter") ? this.sound.add("batChitter", { volume: 0.4 }) : null;
+    this.crawlerSound = this.cache.audio.exists("crawlerSlide") ? this.sound.add("crawlerSlide", { volume: 0.4 }) : null;
+    this.slimeSound = this.cache.audio.exists("slimeJump") ? this.sound.add("slimeJump", { volume: 0.5 }) : null;
+    this.breathSound = this.cache.audio.exists("breath") ? this.sound.add("breath", { volume: 0.5 }) : null;
+    this.platformStepSound = this.cache.audio.exists("platformStep") ? this.sound.add("platformStep", { volume: 0.6 }) : null;
+    this.platformFallSound = this.cache.audio.exists("platformFall") ? this.sound.add("platformFall", { volume: 0.6 }) : null;
+    this.winSound = this.cache.audio.exists("win") ? this.sound.add("win", { volume: 0.7 }) : null;
+    this.boostSound = this.cache.audio.exists("boost") ? this.sound.add("boost", { volume: 0.6 }) : null;
+    this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.5 }) : null;
+    this.music = null;
+    if (this.cache.audio.exists("music")) {
+      this.music = this.sound.add("music", { volume: 0.35, loop: true });
+      this.music.play();
+    }
 
     this.physics.world.setBounds(0, 0, LEVEL_LENGTH, WORLD_H);
     this.physics.world.gravity.y = gravity;
@@ -926,6 +979,7 @@
       this.player.boostAvailable = false;
       return;
     }
+    if (this.lavaHitSound) this.lavaHitSound.play();
     this.isDyingInLava = true;
     this.lavaDeathTimer = LAVA_DEATH_DURATION;
   };
@@ -933,6 +987,7 @@
   GameScene.prototype.onOverlapGoal = function (player, zone) {
     if (this.gameWon) return;
     this.gameWon = true;
+    if (this.winSound) this.winSound.play();
     this.player.body.setVelocity(0, 0);
     var levelState = {
       H: this.WORLD_H,
@@ -970,6 +1025,7 @@
     var idx = dot.getData("index");
     this.dotsCollected[idx] = true;
     this.dotsCollectedCount++;
+    if (this.dotSound) this.dotSound.play();
     dot.setData("collected", true);
     dot.setVisible(false);
     dot.body.checkCollision.none = true;
@@ -999,6 +1055,7 @@
   GameScene.prototype.onOverlapSlime = function (player, slime) {
     if (slime.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound) this.shieldLossSound.play();
       this.killSlime(slime);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
@@ -1016,6 +1073,7 @@
   GameScene.prototype.onOverlapCrawler = function (player, crawler) {
     if (crawler.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound) this.shieldLossSound.play();
       this.killCrawler(crawler);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
@@ -1103,6 +1161,7 @@
   };
 
   GameScene.prototype.applyDeath = function () {
+    if (!this.isDyingInLava && this.deathSound) this.deathSound.play();
     this.lives--;
     if (this.lives <= 0) {
       this.lastCheckpointIndex = -1;
@@ -1313,6 +1372,7 @@
       if (tDeath > 1) tDeath = 1;
       this.player.alpha = 1 - tDeath;
       if (this.lavaDeathTimer <= 0) {
+        if (this.deathSound) this.deathSound.play();
         this.applyDeath();
         this.player.alpha = 1;
       }
@@ -1370,15 +1430,18 @@
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft = 1;
       window.__dragonJumpKeyReleased = false;
+      if (this.jumpSound) this.jumpSound.play();
     } else if (keys.jump && !onGround && this.player.jumpsLeft > 0 && window.__dragonJumpKeyReleased) {
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft--;
       window.__dragonJumpKeyReleased = false;
+      if (this.jumpSound) this.jumpSound.play();
     }
 
     if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
       this.player.boostAvailable = false;
       this.player.boostFramesLeft = BOOST_DURATION_SEC;
+      if (this.boostSound) this.boostSound.play();
     }
     if (this.player.boostFramesLeft > 0) {
       this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * BOOST_POWER_H * dt);
@@ -1391,6 +1454,7 @@
     if (keys.breath && !window.__dragonBreathKeyConsumed && this.fireBreathsLeft > 0 && this.breathActiveTime <= 0) {
       window.__dragonBreathKeyConsumed = true;
       this.breathActiveTime = 10 / REFERENCE_FPS;
+      if (this.breathSound) this.breathSound.play();
     }
 
     // Fire breath overlap vs slimes/crawlers
@@ -1453,6 +1517,7 @@
         if (timer <= 0) {
           slime.setData("state", "jumping");
           slime.setData("vy", -SLIME_JUMP_STRENGTH);
+          if (this.slimeSound) this.slimeSound.play();
         }
       } else {
         slime.x = baseX;
@@ -1512,6 +1577,10 @@
       bat.x = Phaser.Math.Clamp(bat.x + vx * dt, xMin, xMax);
       bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
       bat.body.updateFromGameObject();
+      // Occasional bat chitter (rate scales with dt)
+      if (this.batSound && rng() < 0.4 * dt) {
+        this.batSound.play();
+      }
     }
     // Keep bat parts attached
     for (var bp = 0; bp < this.batParts.length; bp++) {
@@ -1533,12 +1602,17 @@
       if (crawler.getData("dead")) continue;
       var cplat = this.platformsData[crawler.getData("platformIndex")];
       if (!cplat) continue;
-      var offset = crawler.getData("offset") + CRAWLER_PERIMETER_SPEED * dt;
-      if (offset >= 1) offset -= 1;
+      var oldOffset = crawler.getData("offset");
+      var offset = oldOffset + CRAWLER_PERIMETER_SPEED * dt;
+      var wrapped = offset >= 1;
+      if (wrapped) offset -= 1;
       crawler.setData("offset", offset);
       var pos = crawlerPerimeterPosition(cplat, offset);
       crawler.x = pos.cx;
       crawler.y = pos.cy;
+      if (wrapped && this.crawlerSound) {
+        this.crawlerSound.play();
+      }
     }
     // Keep crawler eyes attached
     for (var ce = 0; ce < this.crawlerEyes.length; ce++) {
@@ -1597,9 +1671,17 @@
         p.dropActive = false;
       }
       if (this.standingPlatformIndex === pi && !p.dropping) {
-        p.dropActive = true;
-        if (p.dropTimer > 0) p.dropTimer -= dt;
-        if (p.dropTimer <= 0) p.dropping = true;
+        if (!p.dropActive) {
+          p.dropActive = true;
+          if (this.platformStepSound) this.platformStepSound.play();
+        }
+        if (p.dropTimer > 0) {
+          p.dropTimer -= dt;
+          if (p.dropTimer <= 0) {
+            p.dropping = true;
+            if (this.platformFallSound) this.platformFallSound.play();
+          }
+        }
       }
       if (p.dropping) {
         p.y += p.drop.speed * REFERENCE_FPS * dt;
