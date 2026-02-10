@@ -633,6 +633,8 @@
     this.lavaDeathTimer = 0;
     this.lavaBounceTimer = 0;
     this.lavaBounceItemCollected = false;
+    this.lavaBounceBounces = 0;  // lava touches this run (reset on platform land)
+    this.lavaBounceCooldownUntil = 0;  // avoid counting one fall as multiple touches
     this.fireTotemCollected = false;
     this.fireBreathsLeft = 0;
     this.breathActiveTime = 0;
@@ -894,15 +896,27 @@
     var diffStr = this.currentDifficulty != null ? " (Diff " + Math.max(1, Math.min(30, Math.floor(this.currentDifficulty))) + ")" : "";
     var levelStr = (this.currentLevelSeed != null && this.currentLevelSeed > 0) ? String(this.currentLevelSeed) : (this.currentLevelID || "--");
     var flameStr = this.fireBreathsLeft > 0 ? "\nFlame (G)" : "";
+    var lavaStr = "";
+    if (this.lavaBounceItemCollected) {
+      var lavaLeft = Math.max(0, 2 - (this.lavaBounceBounces || 0));
+      lavaStr = "\nLava: " + lavaLeft;
+    }
     this.hudText.setText(
-      "Time: " + this.currentTime.toFixed(2) + "  Best: " + bestStr + "\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr
+      "Time: " + this.currentTime.toFixed(2) + "  Best: " + bestStr + "\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr
     );
   };
 
   GameScene.prototype.onOverlapLava = function (player, zone) {
     if (this.gameWon || this.isDyingInLava) return;
-    if (this.lavaBounceTimer > 0) {
-      // Strong upward bounce and snap just above lava surface
+    var maxBouncesPerRun = 2;
+    if (this.lavaBounceItemCollected && this.lavaBounceBounces < maxBouncesPerRun) {
+      // One touch per "fall": overlap can fire every frame, so only count once per entry.
+      var now = (typeof this.sceneTime === "number") ? this.sceneTime : 0;
+      var isNewTouch = now >= (this.lavaBounceCooldownUntil || 0);
+      if (isNewTouch) {
+        this.lavaBounceBounces++;
+        this.lavaBounceCooldownUntil = now + 400;
+      }
       this.player.body.setVelocityY(LAVA_BOUNCE_VY);
       var lavaTop = this.lavaZone.y - this.lavaZone.height / 2;
       this.lavaY = lavaTop;
@@ -970,8 +984,9 @@
     if (zone.getData("collected")) return;
     var it = zone.getData("item");
     if (it.type === "lavaBounce") {
+      // Lava orb: grants up to two lava bounces per \"run\" (between landings).
       this.lavaBounceItemCollected = true;
-      this.lavaBounceTimer = 5;
+      this.lavaBounceBounces = 0;
     } else if (it.type === "fireTotem") {
       this.fireTotemCollected = true;
       this.fireBreathsLeft = 1;
@@ -987,6 +1002,8 @@
       this.killSlime(slime);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
+      // Using a shielded hit clears any lava shield as well (no stacking hits)
+      this.lavaBounceItemCollected = false;
       return;
     }
     this.applyDeath();
@@ -1002,6 +1019,7 @@
       this.killCrawler(crawler);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
       return;
     }
     this.applyDeath();
@@ -1226,7 +1244,8 @@
     }
 
     this.lavaBounceItemCollected = false;
-    this.lavaBounceTimer = 0;
+    this.lavaBounceBounces = 0;
+    this.lavaBounceCooldownUntil = 0;
     this.fireBreathsLeft = 0;
     this.fireTotemCollected = false;
     this.breathActiveTime = 0;
@@ -1278,15 +1297,11 @@
   };
 
   GameScene.prototype.update = function (time, delta) {
+    this.sceneTime = (typeof time === "number") ? time : 0;
     var dt = delta / 1000;
     if (dt > 0.05) dt = 0.05;
 
     if (this.gameWon) return;
-
-    if (this.lavaBounceTimer > 0) {
-      this.lavaBounceTimer -= dt;
-      if (this.lavaBounceTimer < 0) this.lavaBounceTimer = 0;
-    }
 
     if (this.isDyingInLava) {
       this.lavaDeathTimer -= dt;
@@ -1321,16 +1336,35 @@
       this.player.body.setVelocityX(moveSpeed);
       this.player.facing = 1;
     }
-    // Change player color when fire shield is active
-    if (this.fireBreathsLeft > 0 || this.fireTotemCollected) {
-      this.player.fillColor = 0xb85c20;
-    } else {
-      this.player.fillColor = 0x4a9b4a;
+    // Change player color for buffs:
+    // - lava orb: always blink while you have it (HUD shows bounces left)
+    // - fire totem: orange tint
+    // - both: orange + blink
+    var dragonColor = 0x4a9b4a;
+    var fireActive = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
+    var orbActive = this.lavaBounceItemCollected;
+    var period = 0.6;
+    var tSec = time / 1000;
+    var phase = (tSec / period) % 1;
+    var bright = phase < 0.5;
+    if (fireActive && orbActive) {
+      dragonColor = bright ? 0xffe2b3 : 0xff8c32;
+    } else if (orbActive) {
+      dragonColor = bright ? 0xfff3c4 : 0xf97316;
+    } else if (fireActive) {
+      dragonColor = 0xb85c20;
     }
+    this.player.fillColor = dragonColor;
 
     var onGround = this.player.body.blocked.down || this.player.body.touching.down;
-    if (onGround) this.player.timeInAir = 0;
-    else this.player.timeInAir += dt;
+    if (onGround) {
+      this.player.timeInAir = 0;
+      // Landing on a platform resets the per-run lava bounce counter,
+      // so you can get two fresh bounces next time you fall into lava.
+      this.lavaBounceBounces = 0;
+    } else {
+      this.player.timeInAir += dt;
+    }
 
     if (keys.jump && onGround) {
       this.player.body.setVelocityY(-jumpStrength);
@@ -1614,7 +1648,12 @@
     for (var ti = 0; ti < this.trail.length; ti++) {
       var tInfo = this.trail[ti];
       var alpha = 0.08 + (ti / this.trail.length) * 0.35;
-      var color = (this.fireBreathsLeft > 0 || this.fireTotemCollected) ? 0xffb84d : 0x4a9b4a;
+      var color = 0x4a9b4a;
+      var fireActiveT = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
+      var orbActiveT = this.lavaBounceItemCollected;
+      if (fireActiveT && orbActiveT) color = 0xffe2b3;
+      else if (orbActiveT) color = 0xfff3c4;
+      else if (fireActiveT) color = 0xffb84d;
       this.trailGraphics.fillStyle(color, alpha);
       this.trailGraphics.fillRect(tInfo.x - DRAGON_W / 2, tInfo.y - DRAGON_H / 2, DRAGON_W, DRAGON_H);
     }
