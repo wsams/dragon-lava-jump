@@ -343,6 +343,7 @@
   var LEVELS_STORAGE_KEY = "dragonLevels";
   var PROFILE_STORAGE_KEY = "dragonProfile";
   var AUDIO_STORAGE_KEY = "dragonAudio";
+  var DIFFICULTY_STORAGE_KEY = "dragonDifficulty";
   var DEFAULT_LEVELS = [
     { id: "pack-01", name: "1 Lava Warmup", difficulty: 1, seed: 101 },
     { id: "pack-02", name: "2 Baby Dragon Steps", difficulty: 2, seed: 102 },
@@ -462,6 +463,35 @@
     var s = loadAudioSettings();
     s.music = !!enabled;
     saveAudioSettings(s);
+  }
+
+  // --- Difficulty setting (dropdown: "random" or 1-30)
+  function loadDifficultySetting() {
+    try {
+      var raw = localStorage.getItem(DIFFICULTY_STORAGE_KEY);
+      if (!raw) return "1";
+      var v = JSON.parse(raw);
+      if (v === "random") return "random";
+      var n = parseInt(v, 10);
+      if (!n || n < 1 || n > 30) return "1";
+      return String(n);
+    } catch (e) {
+      return "1";
+    }
+  }
+
+  function saveDifficultySetting(value) {
+    try {
+      localStorage.setItem(DIFFICULTY_STORAGE_KEY, JSON.stringify(value));
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function getSelectedDifficultyValue() {
+    var sel = document.getElementById("difficultySelect");
+    if (!sel) return loadDifficultySetting();
+    return sel.value || loadDifficultySetting();
   }
 
   function ensureDefaultLevelsSeeded(data, H) {
@@ -1590,7 +1620,8 @@
     if (this.breathActiveTime > 0) {
       var breathX = this.player.x + (this.player.facing > 0 ? 1 : -1) * (DRAGON_W / 2 + DRAGON_MOUTH_OVERHANG + BREATH_LEN / 2);
       var breathW = BREATH_LEN;
-      var breathY = this.player.y;
+      // Raise the flame so it comes out near the dragon's head instead of the feet.
+      var breathY = this.player.y - DRAGON_H * 0.3;
       var breathH = DRAGON_H - 8;
       // Visual flame
       this.breathSprite.setVisible(true);
@@ -1987,6 +2018,27 @@
     window.__dragonPopulateLevelDropdown = populateLevelDropdown;
     window.__dragonPopulatePlayedDropdown = populatePlayedDropdown;
 
+    // Difficulty dropdown (random or 1-30), persisted in localStorage
+    var diffSelect = document.getElementById("difficultySelect");
+    if (diffSelect) {
+      diffSelect.innerHTML = "";
+      var optRandom = document.createElement("option");
+      optRandom.value = "random";
+      optRandom.textContent = "Difficulty: random";
+      diffSelect.appendChild(optRandom);
+      for (var d = 1; d <= 30; d++) {
+        var optD = document.createElement("option");
+        optD.value = String(d);
+        optD.textContent = "Difficulty: " + d;
+        diffSelect.appendChild(optD);
+      }
+      var stored = loadDifficultySetting();
+      diffSelect.value = stored;
+      diffSelect.addEventListener("change", function () {
+        saveDifficultySetting(diffSelect.value);
+      });
+    }
+
     // Mock sign-in: username stored in localStorage profile
     var userForm = document.getElementById("userForm");
     var usernameInput = document.getElementById("usernameInput");
@@ -2164,11 +2216,24 @@
       var value = e.target.value;
       var data = loadAllLevels(WORLD_H);
       if (value === "new") {
+        // Pure random level: use original generator, clear hash.
         window.__dragonLevelData = buildLevelDataForRandom();
+        location.hash = "";
       } else {
         var level = data.levels.find(function (l) { return l.id === value; });
-        if (level) window.__dragonLevelData = buildLevelDataFromStored(level);
+        if (level) {
+          window.__dragonLevelData = buildLevelDataFromStored(level);
+          var ld = window.__dragonLevelData;
+          if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
+            var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
+            location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "");
+          } else {
+            location.hash = "";
+          }
+        }
       }
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
       startOrRestartGame();
     });
 
@@ -2183,12 +2248,27 @@
         if (!seed || seed <= 0 || isNaN(diff)) return;
         if (diff < 1 || diff > 30) diff = 15;
         window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+        location.hash = seed + "/" + diff;
+        var overlay = document.getElementById("winOverlay");
+        if (overlay) overlay.style.display = "none";
         startOrRestartGame();
       });
     }
 
     document.getElementById("newLevelBtn").addEventListener("click", function () {
-      window.__dragonLevelData = buildLevelDataForRandom();
+      // New level: seed is random; difficulty comes from dropdown ("random" uses original generator).
+      var diffVal = getSelectedDifficultyValue();
+      if (diffVal === "random") {
+        window.__dragonLevelData = buildLevelDataForRandom();
+        location.hash = "";
+      } else {
+        var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+        var seed = Math.floor(Math.random() * 1000000000) + 1;
+        window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+        location.hash = seed + "/" + diff;
+      }
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
       startOrRestartGame();
     });
 
@@ -2223,6 +2303,13 @@
       var idx = data.levels.findIndex(function (l) { return l.id === currentID; });
       var nextLevel = (idx >= 0 && idx < data.levels.length - 1) ? data.levels[idx + 1] : data.levels[0];
       window.__dragonLevelData = buildLevelDataFromStored(nextLevel);
+      var ld = window.__dragonLevelData;
+      if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
+        var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
+        location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "");
+      } else {
+        location.hash = "";
+      }
       document.getElementById("winOverlay").style.display = "none";
       startOrRestartGame();
     });
@@ -2230,7 +2317,34 @@
     var winNewLevelBtn = document.getElementById("winNewLevelBtn");
     if (winNewLevelBtn) {
       winNewLevelBtn.addEventListener("click", function () {
-        window.__dragonLevelData = buildLevelDataForRandom();
+        var diffVal = getSelectedDifficultyValue();
+        if (diffVal === "random") {
+          window.__dragonLevelData = buildLevelDataForRandom();
+          location.hash = "";
+        } else {
+          var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+          var seed = Math.floor(Math.random() * 1000000000) + 1;
+          window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+          location.hash = seed + "/" + diff;
+        }
+        document.getElementById("winOverlay").style.display = "none";
+        startOrRestartGame();
+      });
+    }
+
+    var winCloseBtn = document.getElementById("winCloseBtn");
+    if (winCloseBtn) {
+      winCloseBtn.addEventListener("click", function () {
+        var diffVal = getSelectedDifficultyValue();
+        if (diffVal === "random") {
+          window.__dragonLevelData = buildLevelDataForRandom();
+          location.hash = "";
+        } else {
+          var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+          var seed = Math.floor(Math.random() * 1000000000) + 1;
+          window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+          location.hash = seed + "/" + diff;
+        }
         document.getElementById("winOverlay").style.display = "none";
         startOrRestartGame();
       });

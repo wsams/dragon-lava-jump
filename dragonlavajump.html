@@ -12,6 +12,7 @@
   <div id="menu">
     <select id="levelSelect"></select>
     <select id="playedSelect"></select>
+    <select id="difficultySelect"></select>
     <button id="newLevelBtn">New Level</button>
     <button id="shareBtn" type="button">Share</button>
     <button id="muteSfxBtn" type="button">Mute SFX</button>
@@ -29,6 +30,7 @@
       <div id="phaser-game"></div>
       <div id="winOverlay" style="display: none;">
         <div class="win-panel">
+          <button type="button" id="winCloseBtn" class="win-close" aria-label="Close">×</button>
           <h2 class="win-title">You Win!</h2>
           <p class="win-stat"><span id="winTime">Time: 0.00s</span></p>
           <p class="win-stat">Dots: <span id="winDots">0/30</span></p>

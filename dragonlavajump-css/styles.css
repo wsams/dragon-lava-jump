@@ -69,6 +69,26 @@ select, #menu button {
   min-width: 260px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
+.win-panel {
+  position: relative;
+}
+.win-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.win-close:hover {
+  background: rgba(0,0,0,0.75);
+}
 .win-title {
   margin: 0 0 16px 0;
   font-size: 28px;
@@ -231,5 +251,8 @@ select, #menu button {
   #userForm .user-label,
   #userForm .user-name {
     font-size: 12px;
+  }
+  #difficultySelect {
+    max-width: 100px;
   }
 }
