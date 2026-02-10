@@ -206,3 +206,30 @@ select, #menu button {
     padding: 4px 8px;
   }
 }
+
+/* Very small screens: make the top menu wrap nicely */
+@media (max-width: 640px) {
+  #menu {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 6px;
+    column-gap: 6px;
+  }
+  select,
+  #menu button {
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  #userForm {
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  #userForm .user-label,
+  #userForm .user-name {
+    font-size: 12px;
+  }
+}

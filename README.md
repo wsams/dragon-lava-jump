@@ -3,7 +3,7 @@ A side scrolling platformer written in HTML, CSS, and JavaScript
 
 ## Credits
 
-- Music
+- Audio
     - music.mp3 (Sound Effect by freesound_community from Pixabay)
     - jump.mp3 (https://sounddino.com/en/effects/arcade/ - Jump in the game)
     - death.mp3 (https://sounddino.com/en/effects/arcade/ - Level failed)

@@ -341,6 +341,8 @@
 
   // --- Storage
   var LEVELS_STORAGE_KEY = "dragonLevels";
+  var PROFILE_STORAGE_KEY = "dragonProfile";
+  var AUDIO_STORAGE_KEY = "dragonAudio";
   var DEFAULT_LEVELS = [
     { id: "pack-01", name: "1 Lava Warmup", difficulty: 1, seed: 101 },
     { id: "pack-02", name: "2 Baby Dragon Steps", difficulty: 2, seed: 102 },
@@ -373,6 +375,94 @@
     { id: "pack-29", name: "29 Meltdown Marathon", difficulty: 29, seed: 129 },
     { id: "pack-30", name: "30 Apocalypse Apex", difficulty: 30, seed: 130 }
   ];
+
+  function loadProfile() {
+    try {
+      var raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+      if (!raw) return { username: "", runs: [] };
+      var data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return { username: "", runs: [] };
+      if (typeof data.username !== "string") data.username = "";
+      if (!Array.isArray(data.runs)) data.runs = [];
+      return data;
+    } catch (e) {
+      return { username: "", runs: [] };
+    }
+  }
+
+  function saveProfile(profile) {
+    try {
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    } catch (e) {
+      // ignore storage errors in local/offline mode
+    }
+  }
+
+  function getProfileUsername() {
+    var p = loadProfile();
+    return p.username || "";
+  }
+
+  function setProfileUsername(name) {
+    var p = loadProfile();
+    p.username = name || "";
+    saveProfile(p);
+  }
+
+  function appendProfileRun(run) {
+    var p = loadProfile();
+    if (!Array.isArray(p.runs)) p.runs = [];
+    p.runs.push(run);
+    if (p.runs.length > 500) {
+      p.runs = p.runs.slice(p.runs.length - 500);
+    }
+    saveProfile(p);
+  }
+
+  // --- Audio settings (SFX / music toggles)
+  function loadAudioSettings() {
+    try {
+      var raw = localStorage.getItem(AUDIO_STORAGE_KEY);
+      if (!raw) return { sfx: true, music: true };
+      var data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return { sfx: true, music: true };
+      if (typeof data.sfx !== "boolean") data.sfx = true;
+      if (typeof data.music !== "boolean") data.music = true;
+      return data;
+    } catch (e) {
+      return { sfx: true, music: true };
+    }
+  }
+
+  function saveAudioSettings(settings) {
+    try {
+      localStorage.setItem(AUDIO_STORAGE_KEY, JSON.stringify(settings));
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function isSfxEnabled() {
+    var s = loadAudioSettings();
+    return s.sfx !== false;
+  }
+
+  function isMusicEnabled() {
+    var s = loadAudioSettings();
+    return s.music !== false;
+  }
+
+  function setSfxEnabled(enabled) {
+    var s = loadAudioSettings();
+    s.sfx = !!enabled;
+    saveAudioSettings(s);
+  }
+
+  function setMusicEnabled(enabled) {
+    var s = loadAudioSettings();
+    s.music = !!enabled;
+    saveAudioSettings(s);
+  }
 
   function ensureDefaultLevelsSeeded(data, H) {
     if (!data || !Array.isArray(data.levels)) data = { levels: [] };
@@ -682,18 +772,22 @@
     this.shieldLossSound = this.cache.audio.exists("shieldLoss") ? this.sound.add("shieldLoss", { volume: 0.7 }) : null;
     this.lavaHitSound = this.cache.audio.exists("lavaHit") ? this.sound.add("lavaHit", { volume: 0.8 }) : null;
     this.batSound = this.cache.audio.exists("batChitter") ? this.sound.add("batChitter", { volume: 0.4 }) : null;
-    this.crawlerSound = this.cache.audio.exists("crawlerSlide") ? this.sound.add("crawlerSlide", { volume: 0.4 }) : null;
+    this.crawlerSound = this.cache.audio.exists("crawlerSlide") ? this.sound.add("crawlerSlide", { volume: 0.7 }) : null;
     this.slimeSound = this.cache.audio.exists("slimeJump") ? this.sound.add("slimeJump", { volume: 0.5 }) : null;
     this.breathSound = this.cache.audio.exists("breath") ? this.sound.add("breath", { volume: 0.5 }) : null;
     this.platformStepSound = this.cache.audio.exists("platformStep") ? this.sound.add("platformStep", { volume: 0.6 }) : null;
     this.platformFallSound = this.cache.audio.exists("platformFall") ? this.sound.add("platformFall", { volume: 0.6 }) : null;
     this.winSound = this.cache.audio.exists("win") ? this.sound.add("win", { volume: 0.7 }) : null;
     this.boostSound = this.cache.audio.exists("boost") ? this.sound.add("boost", { volume: 0.6 }) : null;
-    this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.5 }) : null;
+    this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.8 }) : null;
     this.music = null;
     if (this.cache.audio.exists("music")) {
       this.music = this.sound.add("music", { volume: 0.35, loop: true });
-      this.music.play();
+      if (isMusicEnabled()) {
+        this.music.play();
+      } else {
+        this.music.setMute(true);
+      }
     }
 
     this.physics.world.setBounds(0, 0, LEVEL_LENGTH, WORLD_H);
@@ -979,7 +1073,7 @@
       this.player.boostAvailable = false;
       return;
     }
-    if (this.lavaHitSound) this.lavaHitSound.play();
+    if (this.lavaHitSound && isSfxEnabled()) this.lavaHitSound.play();
     this.isDyingInLava = true;
     this.lavaDeathTimer = LAVA_DEATH_DURATION;
   };
@@ -987,7 +1081,7 @@
   GameScene.prototype.onOverlapGoal = function (player, zone) {
     if (this.gameWon) return;
     this.gameWon = true;
-    if (this.winSound) this.winSound.play();
+    if (this.winSound && isSfxEnabled()) this.winSound.play();
     this.player.body.setVelocity(0, 0);
     var levelState = {
       H: this.WORLD_H,
@@ -1002,15 +1096,32 @@
       crawlerDefs: this.crawlerDefs,
       currentLevelSeed: this.currentLevelSeed
     };
+
+    // Log completed run to profile (mock sign-in).
+    var username = "";
+    try {
+      var input = document.getElementById("usernameInput");
+      if (input && input.value) username = input.value.trim();
+    } catch (_) {}
+    if (!username) {
+      username = getProfileUsername();
+    }
+    appendProfileRun({
+      username: username || "",
+      timestamp: new Date().toISOString(),
+      levelId: this.currentLevelID || null,
+      seed: this.currentLevelSeed || null,
+      difficulty: this.currentDifficulty != null ? this.currentDifficulty : null,
+      timeSeconds: this.currentTime,
+      dotsCollected: this.dotsCollectedCount,
+      dotsTotal: NUM_DOTS
+    });
+    if (typeof window.__dragonPopulatePlayedDropdown === "function") window.__dragonPopulatePlayedDropdown();
+
+    // For predefined levels, silently update stored bests (no naming prompts).
     var data = loadAllLevels(this.WORLD_H);
     var existing = data.levels.find(function (l) { return l.id === this.currentLevelID; }.bind(this));
-    if (!existing) {
-      var name = window.prompt("Name this level:");
-      if (name) {
-        saveCompletedLevel(this.currentLevelID, name, this.platformsData, this.goal, this.currentTime, this.dotsCollectedCount, levelState, window.__dragonPopulateLevelDropdown);
-        window.alert("Level saved!");
-      }
-    } else {
+    if (existing) {
       saveCompletedLevel(existing.id, existing.name, this.platformsData, this.goal, this.currentTime, this.dotsCollectedCount, levelState, window.__dragonPopulateLevelDropdown);
     }
     if (typeof this.bestScore !== "number" || !isFinite(this.bestScore) || this.currentTime < this.bestScore) {
@@ -1025,7 +1136,7 @@
     var idx = dot.getData("index");
     this.dotsCollected[idx] = true;
     this.dotsCollectedCount++;
-    if (this.dotSound) this.dotSound.play();
+    if (this.dotSound && isSfxEnabled()) this.dotSound.play();
     dot.setData("collected", true);
     dot.setVisible(false);
     dot.body.checkCollision.none = true;
@@ -1055,7 +1166,7 @@
   GameScene.prototype.onOverlapSlime = function (player, slime) {
     if (slime.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
-      if (this.shieldLossSound) this.shieldLossSound.play();
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
       this.killSlime(slime);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
@@ -1073,7 +1184,7 @@
   GameScene.prototype.onOverlapCrawler = function (player, crawler) {
     if (crawler.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
-      if (this.shieldLossSound) this.shieldLossSound.play();
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
       this.killCrawler(crawler);
       this.fireBreathsLeft = 0;
       this.fireTotemCollected = false;
@@ -1161,7 +1272,7 @@
   };
 
   GameScene.prototype.applyDeath = function () {
-    if (!this.isDyingInLava && this.deathSound) this.deathSound.play();
+    if (!this.isDyingInLava && this.deathSound && isSfxEnabled()) this.deathSound.play();
     this.lives--;
     if (this.lives <= 0) {
       this.lastCheckpointIndex = -1;
@@ -1351,6 +1462,8 @@
         var idx = data.levels.findIndex(function (l) { return l.id === this.currentLevelID; }.bind(this));
         nextBtn.style.display = "";
         nextBtn.textContent = (idx >= 0 && idx < data.levels.length - 1) ? "Next level →" : "First level →";
+      } else {
+        nextBtn.style.display = "none";
       }
     }
   };
@@ -1372,7 +1485,7 @@
       if (tDeath > 1) tDeath = 1;
       this.player.alpha = 1 - tDeath;
       if (this.lavaDeathTimer <= 0) {
-        if (this.deathSound) this.deathSound.play();
+        if (this.deathSound && isSfxEnabled()) this.deathSound.play();
         this.applyDeath();
         this.player.alpha = 1;
       }
@@ -1430,18 +1543,18 @@
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft = 1;
       window.__dragonJumpKeyReleased = false;
-      if (this.jumpSound) this.jumpSound.play();
+      if (this.jumpSound && isSfxEnabled()) this.jumpSound.play();
     } else if (keys.jump && !onGround && this.player.jumpsLeft > 0 && window.__dragonJumpKeyReleased) {
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft--;
       window.__dragonJumpKeyReleased = false;
-      if (this.jumpSound) this.jumpSound.play();
+      if (this.jumpSound && isSfxEnabled()) this.jumpSound.play();
     }
 
     if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
       this.player.boostAvailable = false;
       this.player.boostFramesLeft = BOOST_DURATION_SEC;
-      if (this.boostSound) this.boostSound.play();
+      if (this.boostSound && isSfxEnabled()) this.boostSound.play();
     }
     if (this.player.boostFramesLeft > 0) {
       this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * BOOST_POWER_H * dt);
@@ -1454,7 +1567,7 @@
     if (keys.breath && !window.__dragonBreathKeyConsumed && this.fireBreathsLeft > 0 && this.breathActiveTime <= 0) {
       window.__dragonBreathKeyConsumed = true;
       this.breathActiveTime = 10 / REFERENCE_FPS;
-      if (this.breathSound) this.breathSound.play();
+      if (this.breathSound && isSfxEnabled()) this.breathSound.play();
     }
 
     // Fire breath overlap vs slimes/crawlers
@@ -1517,7 +1630,7 @@
         if (timer <= 0) {
           slime.setData("state", "jumping");
           slime.setData("vy", -SLIME_JUMP_STRENGTH);
-          if (this.slimeSound) this.slimeSound.play();
+          if (this.slimeSound && isSfxEnabled()) this.slimeSound.play();
         }
       } else {
         slime.x = baseX;
@@ -1578,7 +1691,7 @@
       bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
       bat.body.updateFromGameObject();
       // Occasional bat chitter (rate scales with dt)
-      if (this.batSound && rng() < 0.4 * dt) {
+      if (this.batSound && isSfxEnabled() && rng() < 0.4 * dt) {
         this.batSound.play();
       }
     }
@@ -1603,14 +1716,17 @@
       var cplat = this.platformsData[crawler.getData("platformIndex")];
       if (!cplat) continue;
       var oldOffset = crawler.getData("offset");
+      var wasTop = oldOffset >= 0 && oldOffset < 0.25;
+      var wasBottom = oldOffset >= 0.5 && oldOffset < 0.75;
       var offset = oldOffset + CRAWLER_PERIMETER_SPEED * dt;
-      var wrapped = offset >= 1;
-      if (wrapped) offset -= 1;
+      if (offset >= 1) offset -= 1;
       crawler.setData("offset", offset);
       var pos = crawlerPerimeterPosition(cplat, offset);
       crawler.x = pos.cx;
       crawler.y = pos.cy;
-      if (wrapped && this.crawlerSound) {
+      var isTop = offset >= 0 && offset < 0.25;
+      var isBottom = offset >= 0.5 && offset < 0.75;
+      if (this.crawlerSound && isSfxEnabled() && ((!wasTop && isTop) || (!wasBottom && isBottom))) {
         this.crawlerSound.play();
       }
     }
@@ -1673,13 +1789,13 @@
       if (this.standingPlatformIndex === pi && !p.dropping) {
         if (!p.dropActive) {
           p.dropActive = true;
-          if (this.platformStepSound) this.platformStepSound.play();
+          if (this.platformStepSound && isSfxEnabled()) this.platformStepSound.play();
         }
         if (p.dropTimer > 0) {
           p.dropTimer -= dt;
           if (p.dropTimer <= 0) {
             p.dropping = true;
-            if (this.platformFallSound) this.platformFallSound.play();
+            if (this.platformFallSound && isSfxEnabled()) this.platformFallSound.play();
           }
         }
       }
@@ -1763,6 +1879,72 @@
     });
   }
 
+  function getPlayedLevelsSummary() {
+    var profile = loadProfile();
+    var runs = (profile && Array.isArray(profile.runs)) ? profile.runs : [];
+    var map = Object.create(null);
+    runs.forEach(function (r) {
+      if (!r) return;
+      if (r.seed == null || r.difficulty == null) return;
+      var seed = r.seed | 0;
+      var diff = r.difficulty | 0;
+      if (!seed || seed <= 0) return;
+      if (!diff || diff < 1 || diff > 30) return;
+      var key = seed + "/" + diff;
+      var time = (typeof r.timeSeconds === "number" && isFinite(r.timeSeconds)) ? r.timeSeconds : Infinity;
+      var dots = (typeof r.dotsCollected === "number") ? r.dotsCollected : 0;
+      var dotsTotal = (typeof r.dotsTotal === "number") ? r.dotsTotal : NUM_DOTS;
+      var ts = Date.parse(r.timestamp || "") || 0;
+      var existing = map[key];
+      if (!existing) {
+        map[key] = {
+          key: key,
+          seed: seed,
+          difficulty: diff,
+          bestTime: time,
+          bestDots: dots,
+          dotsTotal: dotsTotal,
+          lastPlayed: ts
+        };
+      } else {
+        if (time < existing.bestTime) existing.bestTime = time;
+        if (dots > existing.bestDots) {
+          existing.bestDots = dots;
+          existing.dotsTotal = dotsTotal;
+        }
+        if (ts > existing.lastPlayed) existing.lastPlayed = ts;
+      }
+    });
+    var list = Object.keys(map).map(function (k) { return map[k]; });
+    list.sort(function (a, b) {
+      return (b.lastPlayed || 0) - (a.lastPlayed || 0);
+    });
+    return list;
+  }
+
+  function populatePlayedDropdown() {
+    var select = document.getElementById("playedSelect");
+    if (!select) return;
+    var summary = getPlayedLevelsSummary();
+    select.innerHTML = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = summary.length ? "Played levels…" : "No played levels yet";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
+    summary.forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p.seed + "/" + p.difficulty;
+      var best = (typeof p.bestTime === "number" && isFinite(p.bestTime) && p.bestTime < Infinity)
+        ? p.bestTime.toFixed(2) + "s"
+        : "--";
+      var dotsText = p.bestDots > 0 ? (p.bestDots + "/" + (p.dotsTotal || NUM_DOTS)) : "--";
+      opt.textContent = p.seed + "/" + p.difficulty + " (Best: " + best + ", Dots: " + dotsText + ")";
+      select.appendChild(opt);
+    });
+  }
+
   function loadLevelFromHash() {
     var hash = (location.hash || "").slice(1).trim();
     if (!hash) return false;
@@ -1785,7 +1967,100 @@
   // --- Init: bind input, populate dropdown, set initial level, create Phaser game
   function init() {
     populateLevelDropdown();
+    populatePlayedDropdown();
     window.__dragonPopulateLevelDropdown = populateLevelDropdown;
+    window.__dragonPopulatePlayedDropdown = populatePlayedDropdown;
+
+    // Mock sign-in: username stored in localStorage profile
+    var userForm = document.getElementById("userForm");
+    var usernameInput = document.getElementById("usernameInput");
+    var saveUserBtn = document.getElementById("saveUserBtn");
+    function renderUserForm(username) {
+      if (!userForm) return;
+      username = username || "";
+      if (username) {
+        userForm.innerHTML =
+          '<span class="user-label">Player:</span> ' +
+          '<span class="user-name">' + username.replace(/</g, "&lt;").replace(/>/g, "&gt;") + '</span> ' +
+          '<button id="logoutBtn" type="button">Logout</button>';
+        var logoutBtn = document.getElementById("logoutBtn");
+        if (logoutBtn) {
+          logoutBtn.addEventListener("click", function () {
+            setProfileUsername("");
+            // Restore input UI
+            userForm.innerHTML =
+              '<label for="usernameInput">Player:</label>' +
+              '<input id="usernameInput" type="text" placeholder="Your name">' +
+              '<button id="saveUserBtn" type="button">Save</button>';
+            var newInput = document.getElementById("usernameInput");
+            var newSaveBtn = document.getElementById("saveUserBtn");
+            if (newSaveBtn && newInput) {
+              newSaveBtn.addEventListener("click", function () {
+                var name = newInput.value.trim();
+                setProfileUsername(name);
+                renderUserForm(name);
+              });
+            }
+          });
+        }
+      } else {
+        // Ensure input mode if no username
+        userForm.innerHTML =
+          '<label for="usernameInput">Player:</label>' +
+          '<input id="usernameInput" type="text" placeholder="Your name">' +
+          '<button id="saveUserBtn" type="button">Save</button>';
+        var inputEl = document.getElementById("usernameInput");
+        var saveBtnEl = document.getElementById("saveUserBtn");
+        if (inputEl) inputEl.value = getProfileUsername();
+        if (saveBtnEl && inputEl) {
+          saveBtnEl.addEventListener("click", function () {
+            var name = inputEl.value.trim();
+            setProfileUsername(name);
+            renderUserForm(name);
+          });
+        }
+      }
+    }
+    // Initial render based on stored username
+    renderUserForm(getProfileUsername());
+
+    // Audio controls: separate SFX and music toggles
+    var muteSfxBtn = document.getElementById("muteSfxBtn");
+    var muteMusicBtn = document.getElementById("muteMusicBtn");
+    if (muteSfxBtn) {
+      function updateSfxLabel() {
+        muteSfxBtn.textContent = isSfxEnabled() ? "Mute SFX" : "Unmute SFX";
+      }
+      updateSfxLabel();
+      muteSfxBtn.addEventListener("click", function () {
+        var enabled = !isSfxEnabled();
+        setSfxEnabled(enabled);
+        updateSfxLabel();
+      });
+    }
+    if (muteMusicBtn) {
+      function updateMusicLabel() {
+        muteMusicBtn.textContent = isMusicEnabled() ? "Mute music" : "Unmute music";
+      }
+      updateMusicLabel();
+      muteMusicBtn.addEventListener("click", function () {
+        var enabled = !isMusicEnabled();
+        setMusicEnabled(enabled);
+        updateMusicLabel();
+        var game = window.__dragonGame;
+        if (game && game.scene) {
+          var scene = game.scene.getScene("Game");
+          if (scene && scene.music) {
+            if (enabled) {
+              if (!scene.music.isPlaying) scene.music.play();
+              scene.music.setMute(false);
+            } else {
+              scene.music.setMute(true);
+            }
+          }
+        }
+      });
+    }
 
     if (!loadLevelFromHash()) {
       var select = document.getElementById("levelSelect");
@@ -1808,6 +2083,10 @@
       if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") keys.jump = true;
       if (e.code === "KeyF") keys.boost = true;
       if (e.code === "KeyG") keys.breath = true;
+      // Prevent Space and arrow keys from triggering focused buttons/scroll
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown" || e.code === "ArrowLeft" || e.code === "ArrowRight") {
+        if (e.preventDefault) e.preventDefault();
+      }
     });
     window.addEventListener("keyup", function (e) {
       var keys = window.__dragonKeys;
@@ -1877,6 +2156,21 @@
       startOrRestartGame();
     });
 
+    var playedSelect = document.getElementById("playedSelect");
+    if (playedSelect) {
+      playedSelect.addEventListener("change", function (e) {
+        var v = e.target.value || "";
+        if (!v) return;
+        var parts = v.split("/");
+        var seed = parseInt(parts[0], 10);
+        var diff = parts.length > 1 ? parseInt(parts[1], 10) : 15;
+        if (!seed || seed <= 0 || isNaN(diff)) return;
+        if (diff < 1 || diff > 30) diff = 15;
+        window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+        startOrRestartGame();
+      });
+    }
+
     document.getElementById("newLevelBtn").addEventListener("click", function () {
       window.__dragonLevelData = buildLevelDataForRandom();
       startOrRestartGame();
@@ -1916,6 +2210,15 @@
       document.getElementById("winOverlay").style.display = "none";
       startOrRestartGame();
     });
+
+    var winNewLevelBtn = document.getElementById("winNewLevelBtn");
+    if (winNewLevelBtn) {
+      winNewLevelBtn.addEventListener("click", function () {
+        window.__dragonLevelData = buildLevelDataForRandom();
+        document.getElementById("winOverlay").style.display = "none";
+        startOrRestartGame();
+      });
+    }
 
     document.getElementById("winReplayBtn").addEventListener("click", function () {
       if (window.__dragonGame && window.__dragonGame.scene.getScene("Game")) {
