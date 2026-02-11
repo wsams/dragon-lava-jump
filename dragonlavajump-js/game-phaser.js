@@ -808,6 +808,7 @@
     this.lavaBounceTimer = 0;
     this.lavaBounceItemCollected = false;
     this.lavaBounceBounces = 0;  // lava touches this run (reset on platform land)
+    this.lavaBounceTotalUses = 0;  // total bounces with orb; orb is lost after 3
     this.lavaBounceCooldownUntil = 0;  // avoid counting one fall as multiple touches
     this.fireTotemCollected = false;
     this.fireBreathsLeft = 0;
@@ -1114,8 +1115,8 @@
     var flameStr = this.fireBreathsLeft > 0 ? "\nFlame (G)" : "";
     var lavaStr = "";
     if (this.lavaBounceItemCollected) {
-      var lavaLeft = Math.max(0, 2 - (this.lavaBounceBounces || 0));
-      lavaStr = "\nLava: " + lavaLeft;
+      var lavaLeft = Math.max(0, 3 - (this.lavaBounceTotalUses || 0));
+      lavaStr = "\nLava: " + lavaLeft + " left";
     }
     this.hudText.setText(
       "Time: " + this.currentTime.toFixed(2) + "  Best: " + bestStr + "\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr
@@ -1131,6 +1132,7 @@
       var isNewTouch = now >= (this.lavaBounceCooldownUntil || 0);
       if (isNewTouch) {
         this.lavaBounceBounces++;
+        this.lavaBounceTotalUses++;
         this.lavaBounceCooldownUntil = now + 400;
       }
       this.player.body.setVelocityY(LAVA_BOUNCE_VY);
@@ -1140,6 +1142,11 @@
       this.player.onGround = false;
       this.player.jumpsLeft = 1;
       this.player.boostAvailable = false;
+      if (this.lavaBounceTotalUses >= 3) {
+        this.lavaBounceItemCollected = false;
+        this.lavaBounceBounces = 0;
+        if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      }
       return;
     }
     if (this.lavaHitSound && isSfxEnabled()) this.lavaHitSound.play();
@@ -1294,9 +1301,10 @@
     if (zone.getData("collected")) return;
     var it = zone.getData("item");
     if (it.type === "lavaBounce") {
-      // Lava orb: grants up to two lava bounces per \"run\" (between landings).
+      // Lava orb: grants lava bounces (2 per run) until 3 total uses or hit by enemy.
       this.lavaBounceItemCollected = true;
       this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
     } else if (it.type === "fireTotem") {
       this.fireTotemCollected = true;
       this.fireBreathsLeft = 1;
@@ -1558,6 +1566,7 @@
 
     this.lavaBounceItemCollected = false;
     this.lavaBounceBounces = 0;
+    this.lavaBounceTotalUses = 0;
     this.lavaBounceCooldownUntil = 0;
     this.fireBreathsLeft = 0;
     this.fireTotemCollected = false;
