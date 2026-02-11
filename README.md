@@ -38,5 +38,6 @@ Open `dragonlavajump.html` in a browser, or serve the project folder with any st
   - platform-fall.mp3 (https://sounddino.com/en/effects/arcade/ - Sound for an arcade game (Arcade Chirp Descend))
   - boost.mp3 (https://sounddino.com/en/effects/effects/ - Strong mace strike)
   - dot.mp3 (https://sounddino.com/en/effects/drops/ - water drop soft calm close)
+  - checkpoint.mp3 (https://sounddino.com/en/effects/arcade/ - Sound for an arcade game (Arcade Alarm))
 
 This project is not licensed for reuse or distribution.

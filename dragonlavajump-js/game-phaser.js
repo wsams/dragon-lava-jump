@@ -181,6 +181,9 @@
     var candidates = platforms
       .map(function (p, i) { return { p: p, i: i }; })
       .filter(function (x) { return x.i > 0 && !slimePlatformIndices.has(x.i); });
+    if (candidates.length < 2) {
+      candidates = platforms.map(function (p, i) { return { p: p, i: i }; }).filter(function (x) { return x.i > 0; });
+    }
     if (candidates.length < 2) return [];
     var target1 = LEVEL_LENGTH / 3;
     var target2 = (LEVEL_LENGTH * 2) / 3;
@@ -711,7 +714,9 @@
       batDefs: Array.isArray(level.bats) ? level.bats : [],
       itemDefs: Array.isArray(level.items) ? level.items : [],
       dotDefs: dotDefs,
-      checkpointDefs: Array.isArray(level.checkpoints) ? level.checkpoints : [],
+      checkpointDefs: (Array.isArray(level.checkpoints) && level.checkpoints.length >= 2)
+        ? level.checkpoints
+        : generateCheckpoints(platforms, level.slimes || [], (level.seed != null ? level.seed : 0) + 111),
       crawlerDefs: crawlerDefs
     };
   }
@@ -740,6 +745,8 @@
     // - music.mp3         (looping background track)
     // - boost.mp3         (air boost)
     // - dot.mp3           (collecting a dot)
+    // - checkpoint.mp3    (touching a checkpoint; uses dot if missing)
+    this.load.audio("checkpoint", "assets/audio/checkpoint.mp3");
     this.load.audio("jump", "assets/audio/jump.mp3");
     this.load.audio("death", "assets/audio/death.mp3");
     this.load.audio("shieldLoss", "assets/audio/shield-loss.mp3");
@@ -834,6 +841,7 @@
     this.winSound = this.cache.audio.exists("win") ? this.sound.add("win", { volume: 0.7 }) : null;
     this.boostSound = this.cache.audio.exists("boost") ? this.sound.add("boost", { volume: 0.6 }) : null;
     this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.8 }) : null;
+    this.checkpointSound = this.cache.audio.exists("checkpoint") ? this.sound.add("checkpoint", { volume: 0.7 }) : (this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.7 }) : null);
     this.music = null;
     if (this.cache.audio.exists("music")) {
       // Reuse a single music instance so it doesn't stack across scene restarts.
@@ -1033,8 +1041,9 @@
       this.dotSprites.push(dot);
     }
 
-    // Checkpoints (invisible overlap)
+    // Checkpoints (2 per level at ~1/3 and ~2/3) - visible pole + flag, overlap zone
     this.checkpointZones = [];
+    this.checkpointVfx = [];
     for (var cpi = 0; cpi < this.checkpointDefs.length; cpi++) {
       var cp = this.checkpointDefs[cpi];
       var cpplat = this.platformsData[cp.platformIndex];
@@ -1046,6 +1055,9 @@
       zone.body.updateFromGameObject = function () {};
       zone.setData("index", cpi);
       this.checkpointZones.push(zone);
+      var pole = this.add.rectangle(poleCenterX, poleTop + POLE_H / 2, 4, POLE_H, 0x718096).setDepth(18);
+      var flag = this.add.rectangle(poleCenterX + 6, poleTop + 4, 12, 8, 0x48bb78).setDepth(18);
+      this.checkpointVfx.push({ pole: pole, flag: flag });
     }
 
     // Items
@@ -1294,7 +1306,15 @@
 
   GameScene.prototype.onOverlapCheckpoint = function (player, zone) {
     var idx = zone.getData("index");
-    if (idx > this.lastCheckpointIndex) this.lastCheckpointIndex = idx;
+    if (idx > this.lastCheckpointIndex) {
+      this.lastCheckpointIndex = idx;
+      if (this.checkpointSound && isSfxEnabled()) this.checkpointSound.play();
+      var vfx = this.checkpointVfx[idx];
+      if (vfx) {
+        vfx.flag.fillColor = 0xffd93d;
+        vfx.pole.fillColor = 0xa3b18a;
+      }
+    }
   };
 
   GameScene.prototype.onOverlapItem = function (player, zone) {
