@@ -60,7 +60,9 @@
   }
 
   // --- Level generation (ported from legacy levelGen.js)
-  function generateCeilingAndStalactites(difficulty, seed, platforms) {
+  function generateCeilingAndStalactites(difficulty, seed, platforms, worldHeight, worldMinY) {
+    worldHeight = worldHeight || WORLD_H;
+    worldMinY = worldMinY != null ? worldMinY : 0;
     var rng = makeRng(seed);
     var pts = [];
     var dClamped = Math.max(1, Math.min(30, difficulty));
@@ -69,11 +71,21 @@
     var x = 0;
     var baseY = 30;
     var amp = 8 + t * 22;
+    var ceilingMinY = worldMinY + 20;
     while (x <= LEVEL_LENGTH) {
-      var y = baseY + rngRange(rng, -amp, amp);
-      y = Math.max(10, Math.min(70, y));
+      var minPlatY = worldHeight;
+      for (var pi = 0; pi < (platforms || []).length; pi++) {
+        var plat = platforms[pi];
+        if (!plat) continue;
+        if (x >= plat.x && x <= plat.x + (plat.w || 0)) {
+          if (plat.y < minPlatY) minPlatY = plat.y;
+        }
+      }
+      var roofY = minPlatY < worldHeight ? minPlatY - 60 : baseY;
+      var y = roofY + rngRange(rng, -amp, amp);
+      y = Math.max(ceilingMinY, Math.min(roofY + 40, y));
       pts.push({ x: x, y: y });
-      baseY = baseY * 0.7 + y * 0.3;
+      baseY = baseY * 0.5 + y * 0.5;
       x += step;
     }
     var stalDefs = [];
@@ -185,14 +197,14 @@
       candidates = platforms.map(function (p, i) { return { p: p, i: i }; }).filter(function (x) { return x.i > 0; });
     }
     if (candidates.length < 2) return [];
-    var target1 = LEVEL_LENGTH / 3;
-    var target2 = (LEVEL_LENGTH * 2) / 3;
-    var center = function (a) { return a.p.x + a.p.w / 2; };
-    var byDist1 = candidates.slice().sort(function (a, b) { return Math.abs(center(a) - target1) - Math.abs(center(b) - target1); });
-    var byDist2 = candidates.slice().sort(function (a, b) { return Math.abs(center(a) - target2) - Math.abs(center(b) - target2); });
-    var idx1 = byDist1[0].i;
-    var idx2 = byDist2[0].i;
-    if (idx1 === idx2 && candidates.length >= 2) idx2 = byDist2[1].i;
+    var targetIdx1 = Math.floor(candidates.length * 1 / 3);
+    var targetIdx2 = Math.floor(candidates.length * 2 / 3);
+    targetIdx1 = Math.min(targetIdx1, candidates.length - 2);
+    targetIdx2 = Math.max(targetIdx2, targetIdx1 + 1);
+    targetIdx2 = Math.min(targetIdx2, candidates.length - 1);
+    var idx1 = candidates[targetIdx1].i;
+    var idx2 = candidates[targetIdx2].i;
+    if (idx1 === idx2 && candidates.length >= 2) idx2 = candidates[Math.min(targetIdx2 + 1, candidates.length - 1)].i;
     return [{ platformIndex: idx1, offset: 0.5 }, { platformIndex: idx2, offset: 0.5 }];
   }
   function pickCrawlerCountForDifficulty(difficulty) {
@@ -266,16 +278,31 @@
     return dots;
   }
 
+  function computeWorldHeightFromPlatforms(platforms) {
+    if (!Array.isArray(platforms) || !platforms.length) return WORLD_H;
+    var maxBottom = 0;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p) continue;
+      var bottom = p.y + (p.h || 16);
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return Math.max(maxBottom + 120, WORLD_H);
+  }
+
+  // Base play height for start; dynamic world extends well above and below.
+  // Y increases downward, so smaller/negative values are higher in the cave.
+  var BASE_START_Y = 220;
+  // Allow very tall upward shafts (2–3x current height).
+  var MAX_UP_Y = -400;     // ceiling: platforms can go far above the start
+  // Allow very deep pits.
+  var MAX_DOWN_Y = 1400;   // floor: platforms can go far below the start
+
   function generateDefaultLevelLayout(difficulty, seed, H) {
     var rng = makeRng(seed);
     var platforms = [];
-    var start = { x: 40, y: H - 140, w: 180, h: 16 };
+    var start = { x: 40, y: BASE_START_Y, w: 180, h: 16 };
     platforms.push(start);
-    var maxPlatforms = 16 + Math.floor(difficulty * 0.7);
-    var x = start.x + start.w + 70;
-    var baseY = H - 150;
-    var gapMin = 90 + difficulty * 4;
-    var gapMax = 130 + difficulty * 8;
     var dClamped = Math.max(1, Math.min(30, difficulty));
     var t = (dClamped - 1) / 29;
     var easyMin = 140, easyMax = 220;
@@ -285,42 +312,135 @@
     var shortProb = 0.2 + 0.6 * t;
     var shortMin = globalMin * 0.6, shortMax = globalMin;
     var longMin = globalMin, longMax = globalMax * 1.1;
-    var vertAmp = 40 + difficulty * 3;
-    for (var i = 0; i < maxPlatforms; i++) {
-      var gap = rngRange(rng, gapMin, gapMax);
-      x += gap;
-      if (x > LEVEL_LENGTH - 260) break;
-      var useShort = rng() < shortProb;
-      var w = useShort ? rngRange(rng, shortMin, shortMax) : rngRange(rng, longMin, longMax);
-      var y = baseY + rngRange(rng, -vertAmp, vertAmp);
-      y = Math.max(80, Math.min(H - 180, y));
-      var platform = { x: x, y: y, w: w, h: 16 };
-      var bendChance = 0.1 + 0.6 * t;
-      if (rng() < bendChance) {
-        platform.bend = {
-          joint: rngRange(rng, 0.25, 0.75),
-          bendHeight: (rng() < 0.5 ? -1 : 1) * rngRange(rng, 6, 14)
-        };
+    var bendChance = 0.1 + 0.6 * t;
+
+    var cx = start.x + start.w + 70;
+    var cy = BASE_START_Y;
+    var segmentCount = 2 + Math.floor(difficulty / 5);
+    segmentCount = Math.min(segmentCount, 7);
+    var segments = [];
+    var lastDir = "right";
+    for (var si = 0; si < segmentCount; si++) {
+      var dir;
+      if (si === 0) {
+        dir = "right";
+      } else if (lastDir === "right") {
+        dir = rng() < 0.5 ? "up" : "down";
+      } else {
+        dir = "right";
       }
-      platforms.push(platform);
-      baseY = baseY * 0.6 + y * 0.4;
+      lastDir = dir;
+      var platCount = 3 + Math.floor(4 + difficulty * 0.2);
+      if (dir === "right") platCount = Math.floor(platCount * 1.4);
+      segments.push({ dir: dir, platCount: platCount });
     }
+    if (lastDir !== "right") {
+      segments.push({ dir: "right", platCount: Math.floor(4 + difficulty * 0.15) });
+    }
+
+    for (var si = 0; si < segments.length; si++) {
+      var seg = segments[si];
+      var dir = seg.dir;
+      var platCount = seg.platCount;
+      var gapMin = 90 + difficulty * 4;
+      var gapMax = 130 + difficulty * 8;
+      var vertStep = 55 + difficulty * 2;
+      var vertStepMin = 45;
+      // Vertical segments: larger steps for dramatic ceiling/floor change
+      if (dir === "up") {
+        vertStep = 70 + difficulty * 3;
+        vertStepMin = 55;
+      } else if (dir === "down") {
+        vertStep = 70 + difficulty * 3;
+        vertStepMin = 55;
+      }
+
+      for (var pi = 0; pi < platCount; pi++) {
+        var useShort = rng() < shortProb;
+        var w = useShort ? rngRange(rng, shortMin, shortMax) : rngRange(rng, longMin, longMax);
+        var platform;
+
+        if (dir === "right") {
+          var gap = rngRange(rng, gapMin, gapMax);
+          cx += gap;
+          if (cx > LEVEL_LENGTH - 260) break;
+          var vertAmp = 40 + difficulty * 3;
+          var y = cy + rngRange(rng, -vertAmp, vertAmp);
+          y = Math.max(MAX_UP_Y, Math.min(MAX_DOWN_Y, y));
+          platform = { x: cx, y: y, w: w, h: 16 };
+          cy = cy * 0.6 + y * 0.4;
+        } else if (dir === "up") {
+          if (pi > 0) {
+            var step = rngRange(rng, vertStepMin, vertStep);
+            cy -= step;
+            cy = Math.max(MAX_UP_Y, cy);
+          }
+          var xWiggle = rngRange(rng, -20, 20);
+          cx = Math.max(80, Math.min(LEVEL_LENGTH - 120, cx + xWiggle));
+          platform = { x: cx, y: cy, w: w, h: 16 };
+        } else {
+          if (pi > 0) {
+            var stepD = rngRange(rng, vertStepMin, vertStep);
+            cy += stepD;
+            cy = Math.min(MAX_DOWN_Y, cy);
+          }
+          var xWiggleD = rngRange(rng, -20, 20);
+          cx = Math.max(80, Math.min(LEVEL_LENGTH - 120, cx + xWiggleD));
+          platform = { x: cx, y: cy, w: w, h: 16 };
+        }
+
+        if (rng() < bendChance) {
+          platform.bend = {
+            joint: rngRange(rng, 0.25, 0.75),
+            bendHeight: (rng() < 0.5 ? -1 : 1) * rngRange(rng, 6, 14)
+          };
+        }
+        platforms.push(platform);
+      }
+      if (dir !== "right") {
+        var horizEase = rngRange(rng, 60, 120);
+        cx += horizEase;
+      }
+    }
+
+    // Compute dynamic world vertical span from platform bounds.
+    // minPlatY: highest platform (smallest y), maxPlatY: lowest platform bottom.
+    var minPlatY = Infinity;
+    var maxPlatY = 0;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p) continue;
+      if (p.y < minPlatY) minPlatY = p.y;
+      var bottom = p.y + (p.h || 16);
+      if (bottom > maxPlatY) maxPlatY = bottom;
+    }
+    if (!isFinite(minPlatY)) minPlatY = BASE_START_Y;
+    var worldHeight = Math.max(maxPlatY + 120, WORLD_H);
+    // World vertical bounds:
+    // - worldMinY can go above 0 so we get tall upward shafts with headroom
+    //   (a margin above the highest platform).
+    // - worldMaxY is the bottom of the cave where lava sits.
+    var worldMinY = Math.min(0, minPlatY - 200);
+    var worldMaxY = worldHeight;
+
     var dropProbBase = 0.06 + 0.18 * t;
     var maxDroppers = Math.max(1, Math.floor((platforms.length - 2) * (0.08 + 0.2 * t)));
     var dropCount = 0;
     for (var di = 1; di < platforms.length - 1 && dropCount < maxDroppers; di++) {
       var pp = platforms[di];
-      if (!pp || pp.y > H - 120) continue;
+      if (!pp || pp.y > worldHeight - 120) continue;
       if (rng() > dropProbBase) continue;
       pp.drop = { delay: 30 + rng() * 45, speed: 2.4 + t * 1.6 };
       dropCount++;
     }
     var last = platforms[platforms.length - 1];
-    var goalX = Math.min(LEVEL_LENGTH - 120, last.x + last.w + 80);
-    var goal = { x: goalX, y: H - 120, w: 50, h: 80 };
-    var cave = generateCeilingAndStalactites(difficulty, seed + 321, platforms);
-    var bats = generateBats(difficulty, seed + 777, H);
-    var items = generateLavaBounceItem(seed + 888, H).concat(generateFireTotemItem(seed + 999, H));
+    var goalX = Math.min(LEVEL_LENGTH - 120, Math.max(last.x + last.w + 80, cx + 80));
+    var goalY = last ? (last.y - 20) : (worldHeight - 120);
+    goalY = Math.max(MAX_UP_Y + 40, Math.min(worldHeight - 120, goalY));
+    var goal = { x: goalX, y: goalY, w: 50, h: 80 };
+    var cave = generateCeilingAndStalactites(difficulty, seed + 321, platforms, worldHeight, worldMinY);
+    var bats = generateBats(difficulty, seed + 777, worldHeight);
+    var items = generateLavaBounceItem(seed + 888, worldHeight).concat(generateFireTotemItem(seed + 999, worldHeight));
     var slimes = generateSlimesForPlatforms(platforms, difficulty, seed + 999);
     var checkpoints = generateCheckpoints(platforms, slimes, seed + 111);
     var crawlers = generateCrawlers(platforms, slimes, difficulty, seed + 555);
@@ -328,6 +448,9 @@
     return {
       platforms: platforms,
       goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
       ceilingPoints: cave.ceilingPoints,
       stalactites: cave.stalactites,
       bats: bats,
@@ -515,6 +638,9 @@
           name: meta.name,
           platforms: layout.platforms,
           goal: layout.goal,
+          worldHeight: layout.worldHeight,
+          worldMinY: layout.worldMinY,
+          worldMaxY: layout.worldMaxY,
           bestScore: Infinity,
           bestDots: 0,
           difficulty: meta.difficulty,
@@ -536,23 +662,25 @@
           lvl.slimes = generateSlimesForPlatforms(lvl.platforms, lvl.difficulty || meta.difficulty, meta.seed + 999);
           changed = true;
         }
+        var lvlH = lvl.worldHeight || computeWorldHeightFromPlatforms(lvl.platforms) || H;
         if (!Array.isArray(lvl.ceiling) || !Array.isArray(lvl.stalactites)) {
-          var cave = generateCeilingAndStalactites(lvl.difficulty || meta.difficulty, meta.seed + 321, lvl.platforms);
+          var cave = generateCeilingAndStalactites(lvl.difficulty || meta.difficulty, meta.seed + 321, lvl.platforms, lvlH);
           lvl.ceiling = cave.ceilingPoints;
           lvl.stalactites = cave.stalactites;
           changed = true;
         }
+        if (lvl.worldHeight == null) { lvl.worldHeight = lvlH; changed = true; }
         if (!Array.isArray(lvl.bats)) {
-          lvl.bats = generateBats(lvl.difficulty || meta.difficulty, meta.seed + 777, H);
+          lvl.bats = generateBats(lvl.difficulty || meta.difficulty, meta.seed + 777, lvlH);
           changed = true;
         }
         if (!Array.isArray(lvl.items)) lvl.items = [];
         if (!lvl.items.some(function (i) { return i && i.type === "lavaBounce"; })) {
-          lvl.items = lvl.items.concat(generateLavaBounceItem(meta.seed + 888, H));
+          lvl.items = lvl.items.concat(generateLavaBounceItem(meta.seed + 888, lvlH));
           changed = true;
         }
         if (!lvl.items.some(function (i) { return i && i.type === "fireTotem"; })) {
-          lvl.items = lvl.items.concat(generateFireTotemItem(meta.seed + 999, H));
+          lvl.items = lvl.items.concat(generateFireTotemItem(meta.seed + 999, lvlH));
           changed = true;
         }
         if (!Array.isArray(lvl.dots) || lvl.dots.length !== NUM_DOTS) {
@@ -624,6 +752,9 @@
       name: name,
       platforms: platforms,
       goal: goal,
+      worldHeight: levelState.H,
+      worldMinY: levelState.worldMinY,
+      worldMaxY: levelState.worldMaxY,
       bestScore: bestScore,
       bestDots: dots,
       difficulty: levelState.currentDifficulty,
@@ -659,6 +790,9 @@
       bestScore: Infinity,
       platforms: layout.platforms,
       goal: layout.goal,
+      worldHeight: layout.worldHeight,
+      worldMinY: layout.worldMinY,
+      worldMaxY: layout.worldMaxY,
       slimeDefs: layout.slimes,
       ceilingPoints: layout.ceilingPoints,
       stalactiteDefs: layout.stalactites,
@@ -681,6 +815,9 @@
       bestScore: Infinity,
       platforms: layout.platforms,
       goal: layout.goal,
+      worldHeight: layout.worldHeight,
+      worldMinY: layout.worldMinY,
+      worldMaxY: layout.worldMaxY,
       slimeDefs: layout.slimes,
       ceilingPoints: layout.ceilingPoints,
       stalactiteDefs: layout.stalactites,
@@ -695,6 +832,9 @@
   function buildLevelDataFromStored(level) {
     var platforms = JSON.parse(JSON.stringify(level.platforms));
     var goal = JSON.parse(JSON.stringify(level.goal));
+    var worldHeight = level.worldHeight || computeWorldHeightFromPlatforms(platforms);
+    var worldMinY = level.worldMinY != null ? level.worldMinY : 0;
+    var worldMaxY = level.worldMaxY != null ? level.worldMaxY : worldHeight;
     var crawlerDefs = Array.isArray(level.crawlers) && level.crawlers.length > 0
       ? level.crawlers
       : generateCrawlers(platforms, level.slimes || [], level.difficulty != null ? level.difficulty : 15, (level.seed != null ? level.seed : 0) + 555);
@@ -708,6 +848,9 @@
       bestScore: level.bestScore,
       platforms: platforms,
       goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
       slimeDefs: Array.isArray(level.slimes) ? level.slimes : [],
       ceilingPoints: Array.isArray(level.ceiling) ? level.ceiling : [],
       stalactiteDefs: Array.isArray(level.stalactites) ? level.stalactites : [],
@@ -771,7 +914,9 @@
     }
 
     this.LEVEL_LENGTH = LEVEL_LENGTH;
-    this.WORLD_H = WORLD_H;
+    this.worldMinY = data.worldMinY != null ? data.worldMinY : 0;
+    this.worldMaxY = data.worldMaxY != null ? data.worldMaxY : (data.worldHeight || WORLD_H);
+    this.WORLD_H = this.worldMaxY;
     this.platformsData = data.platforms;
     this.basePlatformsData = JSON.parse(JSON.stringify(data.platforms));
     this.goal = data.goal;
@@ -803,7 +948,7 @@
 
     this.lastCheckpointIndex = -1;
     this.lives = LIVES_START;
-    this.lavaY = WORLD_H - 20;
+    this.lavaY = this.worldMaxY - 50;
     this.timerStarted = false;
     this.startTime = 0;
     this.currentTime = 0;
@@ -865,7 +1010,7 @@
       }
     }
 
-    this.physics.world.setBounds(0, 0, LEVEL_LENGTH, WORLD_H);
+    this.physics.world.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
     this.physics.world.gravity.y = gravity;
 
     // Platforms (static) - use rectangles; bent is visual only, collision is AABB
@@ -885,11 +1030,12 @@
       this.platformSprites.push(rect);
     }
 
-    // Lava zone (physics) + visible lava strip
-    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, WORLD_H - 30, LEVEL_LENGTH, 60, 0xff4b3e, 0);
+    // Lava zone (physics) + visible lava strip - at bottom of dynamic world
+    var lavaCenterY = this.worldMaxY - 30;
+    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY, LEVEL_LENGTH, 60, 0xff4b3e, 0);
     this.physics.add.existing(this.lavaZone, true);
     this.lavaZone.body.updateFromGameObject = function () {};
-    this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, WORLD_H - 15, LEVEL_LENGTH, 30, 0xff4b3e, 1)
+    this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY + 15, LEVEL_LENGTH, 30, 0xff4b3e, 1)
       .setDepth(0);
     // Keep a cached lava top for bounce positioning
     this.lavaY = this.lavaZone.y - this.lavaZone.height / 2;
@@ -1100,7 +1246,7 @@
     this.physics.add.overlap(this.player, this.crawlers, this.onOverlapCrawler, null, this);
     this.physics.add.overlap(this.player, this.stalactites, this.onOverlapStalactite, null, this);
 
-    this.cameras.main.setBounds(0, 0, LEVEL_LENGTH, WORLD_H);
+    this.cameras.main.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.cameras.main.setDeadzone(0, 0);
     // On smaller screens, zoom out a bit so you can see more of the level
@@ -1211,6 +1357,8 @@
 
     var levelState = {
       H: this.WORLD_H,
+      worldMinY: this.worldMinY,
+      worldMaxY: this.worldMaxY,
       currentDifficulty: this.currentDifficulty,
       slimeDefs: this.slimeDefs,
       ceilingPoints: this.ceilingPoints,
@@ -1924,7 +2072,7 @@
 
     // Bats update (wander erratically, gently attracted to player)
     var xMin = 50 + BAT_W / 2, xMax = LEVEL_LENGTH - 50 - BAT_W / 2;
-    var yMin = 80 + BAT_H / 2, yMax = WORLD_H - 80 - BAT_H / 2;
+    var yMin = 80 + BAT_H / 2, yMax = this.WORLD_H - 80 - BAT_H / 2;
     for (var bi = 0; bi < this.bats.length; bi++) {
       var bat = this.bats[bi];
       var rng = bat.getData("rng");
