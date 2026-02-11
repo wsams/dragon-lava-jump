@@ -31,11 +31,15 @@
   var DRAGON_W = 30;
   var DRAGON_H = 26;
   var DRAGON_MOUTH_OVERHANG = 6;
+  var DOUBLE_JUMP_PLAT_W = 24;
+  var DOUBLE_JUMP_PLAT_H = 8;
+  var DOUBLE_JUMP_PLAT_FADE_DURATION = 150;
+  var DOUBLE_JUMP_PLAT_VISIBLE_MS = 220;
   var BREATH_LEN = 50;
   var BOOST_AIR_DELAY_SEC = 6 / REFERENCE_FPS;
-  var BOOST_DURATION_SEC = 12 / REFERENCE_FPS;
-  var BOOST_POWER_H = (64 / 12) * REFERENCE_FPS * REFERENCE_FPS;
-  var BOOST_POWER_V = (6 / 12) * REFERENCE_FPS * REFERENCE_FPS;
+  // Boost = straight forward only, strong horizontal push (no vertical)
+  var BOOST_DURATION_SEC = 14 / REFERENCE_FPS;
+  var BOOST_POWER_H = (72 / 12) * REFERENCE_FPS * REFERENCE_FPS;
   var maxUpwardVy = -jumpStrength - 0.5 * REFERENCE_FPS;
   // Stronger lava bounce (approx a jump or higher)
   var LAVA_BOUNCE_VY = -jumpStrength * 1.1;
@@ -811,6 +815,8 @@
     this.dotsCollected = this.dotDefs.map(function () { return false; });
     this.dotsCollectedCount = 0;
     this.standingPlatformIndex = -1;
+    this.doubleJumpPlatform = null;
+    this.wasOnDoubleJumpPlat = false;
     this.cameraX = 0;
 
     // Instantiate sounds if loaded
@@ -1229,6 +1235,43 @@
       this.bestScore = this.currentTime;
     }
     if (typeof window.__dragonPopulateLevelDropdown === "function") window.__dragonPopulateLevelDropdown();
+  };
+
+  GameScene.prototype.spawnDoubleJumpPlatform = function () {
+    var centerX = this.player.x;
+    var topY = this.player.y + DRAGON_H / 2;
+    var centerY = topY + DOUBLE_JUMP_PLAT_H / 2;
+    var glow = this.add.rectangle(centerX, centerY, DOUBLE_JUMP_PLAT_W + 6, DOUBLE_JUMP_PLAT_H + 4, 0x7c3aed);
+    glow.setDepth(14);
+    glow.setAlpha(0.6);
+    glow.setData("doubleJumpPlatform", true);
+    var plat = this.add.rectangle(centerX, centerY, DOUBLE_JUMP_PLAT_W, DOUBLE_JUMP_PLAT_H, 0xa78bfa);
+    plat.setDepth(15);
+    plat.setData("doubleJumpPlatform", true);
+    plat.setData("used", false);
+    this.doubleJumpPlatform = plat;
+    this.physics.add.existing(plat, true);
+    plat.body.checkCollision.down = false;
+    plat.body.checkCollision.left = false;
+    plat.body.checkCollision.right = false;
+    plat.body.updateFromGameObject = function () {};
+    this.platformGroup.add(plat);
+    plat.setData("glow", glow);
+    var scene = this;
+    this.time.delayedCall(DOUBLE_JUMP_PLAT_VISIBLE_MS, function () {
+      if (!plat.scene) return;
+      scene.tweens.add({
+        targets: [plat, glow],
+        alpha: 0,
+        duration: DOUBLE_JUMP_PLAT_FADE_DURATION,
+        onComplete: function () {
+          if (plat.scene && scene.platformGroup) scene.platformGroup.remove(plat);
+          if (glow.scene) glow.destroy();
+          plat.destroy();
+          if (scene.doubleJumpPlatform === plat) scene.doubleJumpPlatform = null;
+        }
+      });
+    });
   };
 
   GameScene.prototype.onOverlapDot = function (player, dot) {
@@ -1711,6 +1754,26 @@
       this.player.jumpsLeft--;
       window.__dragonJumpKeyReleased = false;
       if (this.jumpSound && isSfxEnabled()) this.jumpSound.play();
+      this.spawnDoubleJumpPlatform();
+    }
+
+    var djPlat = this.doubleJumpPlatform;
+    if (djPlat && djPlat.scene && !djPlat.getData("used")) {
+      var overlap = this.physics.overlap(this.player, djPlat);
+      var playerBottom = this.player.y + DRAGON_H / 2;
+      var platTop = djPlat.y - DOUBLE_JUMP_PLAT_H / 2;
+      var onPlat = overlap && playerBottom >= platTop - 2 && playerBottom <= platTop + 8;
+      if (onPlat) {
+        this.wasOnDoubleJumpPlat = true;
+      } else {
+        if (this.wasOnDoubleJumpPlat) {
+          djPlat.setData("used", true);
+          djPlat.body.checkCollision.none = true;
+        }
+        this.wasOnDoubleJumpPlat = false;
+      }
+    } else {
+      this.wasOnDoubleJumpPlat = false;
     }
 
     if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
@@ -1720,9 +1783,6 @@
     }
     if (this.player.boostFramesLeft > 0) {
       this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * BOOST_POWER_H * dt);
-      var vy = this.player.body.velocity.y - BOOST_POWER_V * dt;
-      if (vy < maxUpwardVy) vy = maxUpwardVy;
-      this.player.body.setVelocityY(vy);
       this.player.boostFramesLeft -= dt;
     }
 
@@ -2001,29 +2061,23 @@
       this.player.onGround = false;
     }
 
-    // Simple motion trail behind the dragon
+    // Simple motion trail behind the dragon (uses same dragonColor so orb/totem = orange trail)
     if (!this.trailGraphics) {
       this.trailGraphics = this.add.graphics().setDepth(this.player.depth - 1);
       this.trail = [];
     }
     var speedMag = Math.sqrt(this.player.body.velocity.x * this.player.body.velocity.x + this.player.body.velocity.y * this.player.body.velocity.y);
-    if (speedMag > 80 || this.player.boostFramesLeft > 0) {
+    if (speedMag > 45 || this.player.boostFramesLeft > 0) {
       this.trail.push({ x: this.player.x, y: this.player.y });
-      if (this.trail.length > 14) this.trail.shift();
+      if (this.trail.length > 16) this.trail.shift();
     } else {
       this.trail.length = 0;
     }
     this.trailGraphics.clear();
     for (var ti = 0; ti < this.trail.length; ti++) {
       var tInfo = this.trail[ti];
-      var alpha = 0.08 + (ti / this.trail.length) * 0.35;
-      var color = 0x4a9b4a;
-      var fireActiveT = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
-      var orbActiveT = this.lavaBounceItemCollected;
-      if (fireActiveT && orbActiveT) color = 0xffe2b3;
-      else if (orbActiveT) color = 0xfff3c4;
-      else if (fireActiveT) color = 0xffb84d;
-      this.trailGraphics.fillStyle(color, alpha);
+      var alpha = 0.1 + (ti / Math.max(1, this.trail.length)) * 0.4;
+      this.trailGraphics.fillStyle(dragonColor, alpha);
       this.trailGraphics.fillRect(tInfo.x - DRAGON_W / 2, tInfo.y - DRAGON_H / 2, DRAGON_W, DRAGON_H);
     }
 
