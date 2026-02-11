@@ -39,5 +39,7 @@ Open `dragonlavajump.html` in a browser, or serve the project folder with any st
   - boost.mp3 (https://sounddino.com/en/effects/effects/ - Strong mace strike)
   - dot.mp3 (https://sounddino.com/en/effects/drops/ - water drop soft calm close)
   - checkpoint.mp3 (https://sounddino.com/en/effects/arcade/ - Sound for an arcade game (Arcade Alarm))
+- **Images**
+  - dragon.ico (https://icon-icons.com/icon/dragon-face/98751 - Dragon face - Free Icon in PNG and SVG By Google)
 
 This project is not licensed for reuse or distribution.

@@ -1604,6 +1604,13 @@
         this.itemZones[ii].setData("collected", false);
         this.itemZones[ii].body.checkCollision.none = false;
       }
+      for (var cvi = 0; cvi < this.checkpointVfx.length; cvi++) {
+        var vfx = this.checkpointVfx[cvi];
+        if (vfx && vfx.flag && vfx.pole) {
+          vfx.flag.fillColor = 0x48bb78;
+          vfx.pole.fillColor = 0x718096;
+        }
+      }
     }
     this.timerStarted = false;
     this.startTime = 0;
