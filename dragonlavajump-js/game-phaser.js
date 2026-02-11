@@ -797,6 +797,8 @@
     this.startTime = 0;
     this.currentTime = 0;
     this.gameWon = false;
+    this.winSequenceState = "idle";
+    this.winHoldTimer = 0;
     this.isDyingInLava = false;
     this.lavaDeathTimer = 0;
     this.lavaBounceTimer = 0;
@@ -1142,8 +1144,46 @@
   GameScene.prototype.onOverlapGoal = function (player, zone) {
     if (this.gameWon) return;
     this.gameWon = true;
-    if (this.winSound && isSfxEnabled()) this.winSound.play();
+    this.winSequenceState = "entering";
+
     this.player.body.setVelocity(0, 0);
+    this.player.body.setAllowGravity(false);
+    this.player.body.enable = false;
+
+    var goalCenterX = this.goal.x + this.goal.w / 2;
+    var goalCenterY = this.goal.y + this.goal.h / 2;
+
+    if (this.music && isMusicEnabled()) {
+      var startVol = this.music.volume !== undefined ? this.music.volume : 0.35;
+      this.tweens.addCounter({
+        from: startVol,
+        to: 0.12,
+        duration: 600,
+        onUpdate: function (tween) {
+          if (this.music && this.music.setVolume) this.music.setVolume(tween.getValue());
+        },
+        callbackScope: this
+      });
+    }
+    if (this.winSound && isSfxEnabled()) this.winSound.play();
+
+    var enterDuration = 1200;
+    this.tweens.add({
+      targets: this.player,
+      x: goalCenterX,
+      y: goalCenterY,
+      scaleX: 0,
+      scaleY: 0,
+      angle: 360,
+      duration: enterDuration,
+      ease: "Cubic.easeIn",
+      onComplete: function () {
+        this.winSequenceState = "holding";
+        this.winHoldTimer = 1.8;
+      },
+      callbackScope: this
+    });
+
     var levelState = {
       H: this.WORLD_H,
       currentDifficulty: this.currentDifficulty,
@@ -1189,7 +1229,6 @@
       this.bestScore = this.currentTime;
     }
     if (typeof window.__dragonPopulateLevelDropdown === "function") window.__dragonPopulateLevelDropdown();
-    this.showWinOverlay();
   };
 
   GameScene.prototype.onOverlapDot = function (player, dot) {
@@ -1498,6 +1537,8 @@
     this.startTime = 0;
     this.currentTime = 0;
     this.gameWon = false;
+    this.winSequenceState = "idle";
+    this.winHoldTimer = 0;
     this.isDyingInLava = false;
     this.lavaDeathTimer = 0;
   };
@@ -1511,10 +1552,24 @@
     return 1 - d / HEARING_MAX_DISTANCE;
   };
 
-  GameScene.prototype.showWinOverlay = function () {
+  GameScene.prototype.showWinOverlay = function (fadeIn) {
     var el = document.getElementById("winOverlay");
     if (!el) return;
-    el.style.display = "flex";
+    if (fadeIn) {
+      el.style.display = "flex";
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.5s ease";
+      var scene = this;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          el.style.opacity = "1";
+        });
+      });
+    } else {
+      el.style.display = "flex";
+      el.style.opacity = "1";
+      el.style.transition = "";
+    }
     var timeEl = document.getElementById("winTime");
     var dotsEl = document.getElementById("winDots");
     var bestEl = document.getElementById("winBest");
@@ -1543,7 +1598,29 @@
     var dt = delta / 1000;
     if (dt > 0.05) dt = 0.05;
 
-    if (this.gameWon) return;
+    if (this.gameWon) {
+      if (this.playerHead && this.playerHead.active) {
+        var fx = this.player.facing;
+        var sx = this.player.scaleX;
+        var sy = this.player.scaleY;
+        this.playerHead.x = this.player.x + fx * 15 * sx;
+        this.playerHead.y = this.player.y;
+        this.playerHead.scaleX = sx;
+        this.playerHead.scaleY = sy;
+        this.playerEye.x = this.player.x + fx * 8 * sx;
+        this.playerEye.y = this.player.y - 5;
+        this.playerEye.scaleX = sx;
+        this.playerEye.scaleY = sy;
+      }
+      if (this.winSequenceState === "holding") {
+        this.winHoldTimer -= dt;
+        if (this.winHoldTimer <= 0) {
+          this.winSequenceState = "done";
+          this.showWinOverlay(true);
+        }
+      }
+      return;
+    }
 
     if (this.isDyingInLava) {
       this.lavaDeathTimer -= dt;
