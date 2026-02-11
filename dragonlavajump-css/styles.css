@@ -15,15 +15,74 @@ body {
 #menu {
   flex-shrink: 0;
   display: flex;
-  gap: 10px;
-  padding: 8px;
+  gap: 6px;
+  padding: 6px 8px;
   margin-bottom: 2.25em;
+  align-items: center;
+  flex-wrap: wrap;
 }
 select, #menu button {
-  padding: 6px 10px;
-  font-size: 14px;
+  padding: 4px 8px;
+  font-size: 13px;
   border-radius: 6px;
   border: none;
+}
+#menu button {
+  background: #374151;
+  color: #d1d5db;
+  cursor: pointer;
+  font-weight: 500;
+}
+#menu button:hover {
+  background: #4b5563;
+  color: #f3f4f6;
+}
+#menu select {
+  background: #374151;
+  color: #d1d5db;
+}
+#menu select:hover, #menu select:focus {
+  background: #4b5563;
+  color: #f3f4f6;
+}
+#menu #shareBtn {
+  font-size: 16px;
+  padding: 4px 10px;
+}
+#menu #shareBtn.share-copied {
+  background: #be185d;
+  color: #fce7f3;
+  box-shadow: 0 0 12px rgba(190, 24, 93, 0.8);
+}
+#menu #muteSfxBtn,
+#menu #muteMusicBtn {
+  font-size: 14px;
+  padding: 4px 8px;
+  min-width: 2.5em;
+}
+#menu #userForm .user-name-pill {
+  display: inline-block;
+  background: #374151;
+  color: #d1d5db;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+#menu #userForm input {
+  background: #374151;
+  color: #d1d5db;
+  border: 1px solid #4b5563;
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+#menu #userForm input::placeholder {
+  color: #6b7280;
+}
+#menu #saveUserBtn {
+  padding: 3px 8px;
+  font-size: 12px;
 }
 #game-container {
   flex: 1;
@@ -238,7 +297,7 @@ select, #menu button {
   select,
   #menu button {
     font-size: 12px;
-    padding: 4px 8px;
+    padding: 3px 6px;
   }
   #userForm {
     flex-basis: 100%;
@@ -248,8 +307,7 @@ select, #menu button {
     gap: 6px;
     flex-wrap: wrap;
   }
-  #userForm .user-label,
-  #userForm .user-name {
+  #userForm .user-name-pill {
     font-size: 12px;
   }
   #difficultySelect {

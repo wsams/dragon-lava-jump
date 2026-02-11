@@ -10,17 +10,16 @@
 <body>
 
   <div id="menu">
-    <select id="levelSelect"></select>
-    <select id="playedSelect"></select>
-    <select id="difficultySelect"></select>
-    <button id="newLevelBtn">New Level</button>
-    <button id="shareBtn" type="button">Share</button>
-    <button id="muteSfxBtn" type="button">Mute SFX</button>
-    <button id="muteMusicBtn" type="button">Mute music</button>
+    <select id="levelSelect" title="Select a level"></select>
+    <select id="playedSelect" title="Previously played levels"></select>
+    <select id="difficultySelect" title="Difficulty (affects level generation)"></select>
+    <button id="newLevelBtn" type="button" title="New random level">New</button>
+    <button id="shareBtn" type="button" aria-label="Share" title="Copy level link to clipboard">⤴</button>
+    <button id="muteSfxBtn" type="button" aria-label="Toggle SFX" title="Mute / unmute sound effects"></button>
+    <button id="muteMusicBtn" type="button" aria-label="Toggle music" title="Mute / unmute music"></button>
     <div id="userForm">
-      <label for="usernameInput">Player:</label>
-      <input id="usernameInput" type="text" placeholder="Your name">
-      <button id="saveUserBtn" type="button">Save</button>
+      <input id="usernameInput" type="text" placeholder="Your name" title="Your player name">
+      <button id="saveUserBtn" type="button" title="Save player name">Save</button>
     </div>
   </div>
 

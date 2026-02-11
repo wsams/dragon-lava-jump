@@ -2255,18 +2255,16 @@
       username = username || "";
       if (username) {
         userForm.innerHTML =
-          '<span class="user-label">Player:</span> ' +
-          '<span class="user-name">' + username.replace(/</g, "&lt;").replace(/>/g, "&gt;") + '</span> ' +
-          '<button id="logoutBtn" type="button">Logout</button>';
+          '<span class="user-name-pill">' + username.replace(/</g, "&lt;").replace(/>/g, "&gt;") + '</span> ' +
+          '<button id="logoutBtn" type="button" title="Logout (clear player name)">Logout</button>';
         var logoutBtn = document.getElementById("logoutBtn");
         if (logoutBtn) {
           logoutBtn.addEventListener("click", function () {
             setProfileUsername("");
             // Restore input UI
             userForm.innerHTML =
-              '<label for="usernameInput">Player:</label>' +
-              '<input id="usernameInput" type="text" placeholder="Your name">' +
-              '<button id="saveUserBtn" type="button">Save</button>';
+              '<input id="usernameInput" type="text" placeholder="Your name" title="Your player name">' +
+              '<button id="saveUserBtn" type="button" title="Save player name">Save</button>';
             var newInput = document.getElementById("usernameInput");
             var newSaveBtn = document.getElementById("saveUserBtn");
             if (newSaveBtn && newInput) {
@@ -2281,9 +2279,8 @@
       } else {
         // Ensure input mode if no username
         userForm.innerHTML =
-          '<label for="usernameInput">Player:</label>' +
-          '<input id="usernameInput" type="text" placeholder="Your name">' +
-          '<button id="saveUserBtn" type="button">Save</button>';
+          '<input id="usernameInput" type="text" placeholder="Your name" title="Your player name">' +
+          '<button id="saveUserBtn" type="button" title="Save player name">Save</button>';
         var inputEl = document.getElementById("usernameInput");
         var saveBtnEl = document.getElementById("saveUserBtn");
         if (inputEl) inputEl.value = getProfileUsername();
@@ -2304,7 +2301,7 @@
     var muteMusicBtn = document.getElementById("muteMusicBtn");
     if (muteSfxBtn) {
       function updateSfxLabel() {
-        muteSfxBtn.textContent = isSfxEnabled() ? "Mute SFX" : "Unmute SFX";
+        muteSfxBtn.textContent = isSfxEnabled() ? "\u{1F50A} FX" : "\u{1F507} FX";
       }
       updateSfxLabel();
       muteSfxBtn.addEventListener("click", function () {
@@ -2315,7 +2312,7 @@
     }
     if (muteMusicBtn) {
       function updateMusicLabel() {
-        muteMusicBtn.textContent = isMusicEnabled() ? "Mute music" : "Unmute music";
+        muteMusicBtn.textContent = isMusicEnabled() ? "\u{1F50A}\u266A" : "\u{1F507}\u266A";
       }
       updateMusicLabel();
       muteMusicBtn.addEventListener("click", function () {
@@ -2504,9 +2501,8 @@
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(function () {
           var btn = document.getElementById("shareBtn");
-          var orig = btn.textContent;
-          btn.textContent = "Copied!";
-          setTimeout(function () { btn.textContent = orig; }, 1500);
+          btn.classList.add("share-copied");
+          setTimeout(function () { btn.classList.remove("share-copied"); }, 600);
         }).catch(function () {
           window.prompt("Copy this link:", url);
         });
