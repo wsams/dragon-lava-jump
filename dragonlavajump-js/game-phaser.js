@@ -40,6 +40,8 @@
   // Stronger lava bounce (approx a jump or higher)
   var LAVA_BOUNCE_VY = -jumpStrength * 1.1;
   var LAVA_DEATH_DURATION = 35 / REFERENCE_FPS;
+  // Max distance (px) at which creature/platform sounds are audible (~just off screen)
+  var HEARING_MAX_DISTANCE = 420;
 
   // --- RNG
   function makeRng(seed) {
@@ -1498,6 +1500,15 @@
     this.lavaDeathTimer = 0;
   };
 
+  // 0 = too far to hear, 1 = at player; used for distance-based SFX volume
+  GameScene.prototype.getProximityVolume = function (x, y) {
+    var dx = this.player.x - x;
+    var dy = this.player.y - y;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d >= HEARING_MAX_DISTANCE) return 0;
+    return 1 - d / HEARING_MAX_DISTANCE;
+  };
+
   GameScene.prototype.showWinOverlay = function () {
     var el = document.getElementById("winOverlay");
     if (!el) return;
@@ -1691,7 +1702,10 @@
         if (timer <= 0) {
           slime.setData("state", "jumping");
           slime.setData("vy", -SLIME_JUMP_STRENGTH);
-          if (this.slimeSound && isSfxEnabled()) this.slimeSound.play();
+          if (this.slimeSound && isSfxEnabled()) {
+            var pv = this.getProximityVolume(slime.x, slime.y);
+            if (pv > 0.06) this.slimeSound.play({ volume: 0.5 * pv });
+          }
         }
       } else {
         slime.x = baseX;
@@ -1751,9 +1765,10 @@
       bat.x = Phaser.Math.Clamp(bat.x + vx * dt, xMin, xMax);
       bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
       bat.body.updateFromGameObject();
-      // Occasional bat chitter (rate scales with dt)
+      // Occasional bat chitter (rate scales with dt); volume by proximity
       if (this.batSound && isSfxEnabled() && rng() < 0.4 * dt) {
-        this.batSound.play();
+        var pv = this.getProximityVolume(bat.x, bat.y);
+        if (pv > 0.06) this.batSound.play({ volume: 0.4 * pv });
       }
     }
     // Keep bat parts attached
@@ -1788,7 +1803,8 @@
       var isTop = offset >= 0 && offset < 0.25;
       var isBottom = offset >= 0.5 && offset < 0.75;
       if (this.crawlerSound && isSfxEnabled() && ((!wasTop && isTop) || (!wasBottom && isBottom))) {
-        this.crawlerSound.play();
+        var pv = this.getProximityVolume(crawler.x, crawler.y);
+        if (pv > 0.06) this.crawlerSound.play({ volume: 0.7 * pv });
       }
     }
     // Keep crawler eyes attached
@@ -1848,15 +1864,18 @@
         p.dropActive = false;
       }
       if (this.standingPlatformIndex === pi && !p.dropping) {
+        var platCx = p.x + p.w / 2;
+        var platCy = p.y + p.h / 2;
+        var pv = this.getProximityVolume(platCx, platCy);
         if (!p.dropActive) {
           p.dropActive = true;
-          if (this.platformStepSound && isSfxEnabled()) this.platformStepSound.play();
+          if (this.platformStepSound && isSfxEnabled() && pv > 0.06) this.platformStepSound.play({ volume: 0.6 * pv });
         }
         if (p.dropTimer > 0) {
           p.dropTimer -= dt;
           if (p.dropTimer <= 0) {
             p.dropping = true;
-            if (this.platformFallSound && isSfxEnabled()) this.platformFallSound.play();
+            if (this.platformFallSound && isSfxEnabled() && pv > 0.06) this.platformFallSound.play({ volume: 0.6 * pv });
           }
         }
       }
