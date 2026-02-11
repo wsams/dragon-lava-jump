@@ -888,8 +888,10 @@
     this.physics.add.existing(this.goalZone, true);
     this.goalZone.body.updateFromGameObject = function () {};
 
-    // Player - fixed hitbox: body size 30x26, centered; flip only sprite for facing
+    // Player - blocky Atari-style dragon: body rectangle + separate head/eye positioned by facing
     this.player = this.add.rectangle(0, 0, DRAGON_W, DRAGON_H, 0x4a9b4a);
+    this.playerHead = this.add.rectangle(0, 0, 6, 12, 0x3d8b3d).setDepth(21);
+    this.playerEye = this.add.rectangle(0, 0, 3, 3, 0xffffff).setDepth(21);
     this.physics.add.existing(this.player, false);
     this.player.body.setSize(DRAGON_W, DRAGON_H);
     this.player.body.setOffset(0, 0);
@@ -1551,11 +1553,16 @@
       var tDeath = 1 - (this.lavaDeathTimer / LAVA_DEATH_DURATION);
       if (tDeath < 0) tDeath = 0;
       if (tDeath > 1) tDeath = 1;
-      this.player.alpha = 1 - tDeath;
+      var alpha = 1 - tDeath;
+      this.player.alpha = alpha;
+      this.playerHead.alpha = alpha;
+      this.playerEye.alpha = alpha;
       if (this.lavaDeathTimer <= 0) {
         if (this.deathSound && isSfxEnabled()) this.deathSound.play();
         this.applyDeath();
         this.player.alpha = 1;
+        this.playerHead.alpha = 1;
+        this.playerEye.alpha = 1;
       }
       return;
     }
@@ -1596,6 +1603,13 @@
       dragonColor = 0xb85c20;
     }
     this.player.fillColor = dragonColor;
+    this.playerHead.fillColor = dragonColor;
+    this.playerEye.fillColor = 0xffffff;
+    var fx = this.player.facing;
+    this.playerHead.x = this.player.x + fx * 15;
+    this.playerHead.y = this.player.y;
+    this.playerEye.x = this.player.x + fx * 8;
+    this.playerEye.y = this.player.y - 5;
 
     var onGround = this.player.body.blocked.down || this.player.body.touching.down;
     if (onGround) {
