@@ -17,6 +17,7 @@
   var DOT_R = 3.5;
   var DOT_SAFETY_MARGIN = 15;
   var SLIME_AVOID_BAND = 0.28;
+  var CACTUS_AVOID_BAND = 0.2;  // dots must not touch cacti (platform-ratio band each side of cactus center)
   var POLE_W = 12;
   var POLE_H = 40;
   var LIVES_START = 3;
@@ -232,12 +233,17 @@
     }
     return defs;
   }
-  function generateDots(platforms, seed, goal, slimeDefs, crawlerDefs) {
+  function generateDots(platforms, seed, goal, slimeDefs, crawlerDefs, cactusDefs) {
     var dots = [];
     var maxX = (goal && typeof goal.x === "number") ? goal.x - DOT_SAFETY_MARGIN : LEVEL_LENGTH - 50;
     var crawlerPlatforms = new Set((crawlerDefs || []).map(function (c) { return c.platformIndex; }));
     var slimeByPlatform = new Map();
     (slimeDefs || []).forEach(function (s) { slimeByPlatform.set(s.platformIndex, s); });
+    var cactusByPlatform = new Map();
+    (cactusDefs || []).forEach(function (c) {
+      if (!cactusByPlatform.has(c.platformIndex)) cactusByPlatform.set(c.platformIndex, []);
+      cactusByPlatform.get(c.platformIndex).push(c);
+    });
     var safePlatforms = (platforms || []).map(function (p, i) { return { p: p, i: i }; }).filter(
       function (x) { return x.p && x.p.w > 12 && x.p.x < maxX && !crawlerPlatforms.has(x.i); }
     );
@@ -249,14 +255,41 @@
       var left = p.x + 8;
       var right = Math.min(p.x + p.w - 8, maxX - 4);
       var y = p.y - 6;
+      if (right <= left) continue;
       var slime = slimeByPlatform.get(i);
-      if (slime && right > left) {
-        var avoidL = Math.max(left, p.x + p.w * (slime.offset - SLIME_AVOID_BAND));
-        var avoidR = Math.min(right, p.x + p.w * (slime.offset + SLIME_AVOID_BAND));
-        if (avoidL > left) segments.push({ left: left, right: avoidL, y: y });
-        if (right > avoidR) segments.push({ left: avoidR, right: right, y: y });
-      } else if (right > left) {
+      var cacti = cactusByPlatform.get(i) || [];
+      var avoidRanges = [];
+      if (slime) {
+        avoidRanges.push([
+          Math.max(left, p.x + p.w * (slime.offset - SLIME_AVOID_BAND)),
+          Math.min(right, p.x + p.w * (slime.offset + SLIME_AVOID_BAND))
+        ]);
+      }
+      cacti.forEach(function (c) {
+        avoidRanges.push([
+          Math.max(left, p.x + p.w * (c.offset - CACTUS_AVOID_BAND)),
+          Math.min(right, p.x + p.w * (c.offset + CACTUS_AVOID_BAND))
+        ]);
+      });
+      if (avoidRanges.length === 0) {
         segments.push({ left: left, right: right, y: y });
+      } else {
+        avoidRanges.sort(function (a, b) { return a[0] - b[0]; });
+        var merged = [];
+        for (var r = 0; r < avoidRanges.length; r++) {
+          var ar = avoidRanges[r];
+          if (merged.length && ar[0] <= merged[merged.length - 1][1]) {
+            merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], ar[1]);
+          } else {
+            merged.push([ar[0], ar[1]]);
+          }
+        }
+        var segLeft = left;
+        for (var m = 0; m < merged.length; m++) {
+          if (segLeft < merged[m][0]) segments.push({ left: segLeft, right: merged[m][0], y: y });
+          segLeft = Math.max(segLeft, merged[m][1]);
+        }
+        if (segLeft < right) segments.push({ left: segLeft, right: right, y: y });
       }
     }
     var totalLen = segments.reduce(function (s, seg) { return s + (seg.right - seg.left); }, 0);
@@ -471,6 +504,168 @@
     return { cx: p.x, cy: p.y + th - f * th };
   }
 
+  // --- Biomes: abstract level generation and entities per biome
+  var BIOME_STORAGE_KEY = "dragonBiome";
+
+  function getSelectedBiomeId() {
+    try {
+      var v = localStorage.getItem(BIOME_STORAGE_KEY);
+      if (v === "desert" || v === "default") return v;
+    } catch (e) {}
+    return "default";
+  }
+
+  function setSelectedBiomeId(id) {
+    try {
+      if (id === "desert" || id === "default") localStorage.setItem(BIOME_STORAGE_KEY, id);
+    } catch (e) {}
+  }
+
+  // Default (cave) biome: uses existing generateDefaultLevelLayout
+  var DefaultBiome = {
+    id: "default",
+    name: "Cave",
+    assetBasePath: "assets/audio",
+    generateLevel: function (difficulty, seed, H) {
+      return generateDefaultLevelLayout(difficulty, seed, H);
+    }
+  };
+
+  // Desert biome constants
+  var DESERT_PLATFORM_BASE_Y = 280;
+  var CACTUS_W = 20;
+  var CACTUS_H = 36;
+  var CACTUS_NEEDLE_TRIGGER_DIST = 90;
+  var CACTUS_SHAKE_DURATION = 0.4;
+  var CACTUS_NEEDLE_COUNT = 4;
+  var NEEDLE_SPEED = 180;
+  var NEEDLE_R = 4;
+  var SCORPION_W = 22;
+  var SCORPION_H = 14;
+  var SCORPION_SPEED = 45;
+  var SCORPION_PATROL_MARGIN = 30;
+  var BUZZARD_W = 26;
+  var BUZZARD_H = 18;
+  var BUZZARD_MAX_SPEED = 2.0 * REFERENCE_FPS;
+  var BUZZARD_WANDER_STRENGTH = 0.45 * REFERENCE_FPS;
+
+  function generateDesertLevelLayout(difficulty, seed, H) {
+    var rng = makeRng(seed);
+    var platforms = [];
+    var start = { x: 40, y: DESERT_PLATFORM_BASE_Y, w: 200, h: 16 };
+    platforms.push(start);
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var t = (dClamped - 1) / 29;
+    // Mostly flat, long platforms; some double or triple length
+    var baseGap = 100 + difficulty * 3;
+    var baseW = 160 + difficulty * 4;
+    var cx = start.x + start.w + 60;
+    var cy = DESERT_PLATFORM_BASE_Y;
+    var worldHeight = H || WORLD_H;
+    var platCount = 18 + Math.floor(difficulty * 0.5);
+    for (var i = 0; i < platCount; i++) {
+      var gap = baseGap * rngRange(rng, 0.85, 1.15);
+      cx += gap;
+      if (cx > LEVEL_LENGTH - 200) break;
+      var wiggle = rngRange(rng, -12, 12);
+      var y = cy + wiggle;
+      var useLong = rng() < 0.35 + t * 0.2;
+      var w = useLong ? baseW * rngRange(rng, 1.8, 2.8) : baseW * rngRange(rng, 0.9, 1.3);
+      w = Math.min(w, LEVEL_LENGTH - cx - 80);
+      if (w < 60) continue;
+      platforms.push({ x: cx, y: y, w: w, h: 16 });
+      cy = cy * 0.7 + y * 0.3;
+    }
+    var last = platforms[platforms.length - 1];
+    worldHeight = computeWorldHeightFromPlatforms(platforms);
+    var goalX = Math.min(LEVEL_LENGTH - 100, last.x + last.w + 70);
+    var goalY = last.y - 20;
+    var goal = { x: goalX, y: goalY, w: 50, h: 80 };
+    var worldMinY = Math.min(0, DESERT_PLATFORM_BASE_Y - 150);
+    var worldMaxY = worldHeight;
+
+    // Cacti on platforms (3 varieties: 0 = saguaro, 1 = barrel, 2 = needle-shooter)
+    var cactusDefs = [];
+    var cactusSeed = seed + 2000;
+    var cactiRng = makeRng(cactusSeed);
+    for (var pi = 1; pi < platforms.length - 1; pi++) {
+      var plat = platforms[pi];
+      if (!plat || plat.w < 50) continue;
+      var numCacti = cactiRng() < 0.5 ? 0 : (cactiRng() < 0.7 ? 1 : 2);
+      for (var nc = 0; nc < numCacti; nc++) {
+        var offset = 0.15 + cactiRng() * 0.7;
+        var variety = Math.floor(cactiRng() * 3);
+        cactusDefs.push({ platformIndex: pi, offset: offset, variety: variety });
+      }
+    }
+
+    // Scorpions: patrol along ground (platform bottom edges); store platformIndex and left/right x bounds
+    var scorpionDefs = [];
+    var scorpRng = makeRng(seed + 3000);
+    var scorpCount = 2 + Math.floor(dClamped / 6);
+    for (var si = 0; si < scorpCount; si++) {
+      var platIdx = 1 + Math.floor(scorpRng() * (platforms.length - 2));
+      var sp = platforms[platIdx];
+      if (!sp) continue;
+      var left = sp.x + SCORPION_PATROL_MARGIN;
+      var right = sp.x + sp.w - SCORPION_PATROL_MARGIN;
+      if (right - left < 40) continue;
+      scorpionDefs.push({
+        platformIndex: platIdx,
+        startX: left + scorpRng() * (right - left - 40),
+        left: left,
+        right: right,
+        direction: scorpRng() < 0.5 ? 1 : -1
+      });
+    }
+
+    // Buzzards in sky (like bats)
+    var buzzardDefs = [];
+    var buzzRng = makeRng(seed + 4000);
+    var buzzCount = 1 + Math.floor(dClamped / 10);
+    for (var bi = 0; bi < buzzCount; bi++) {
+      buzzardDefs.push({
+        x: rngRange(buzzRng, 200, LEVEL_LENGTH - 200),
+        y: rngRange(buzzRng, 60, worldHeight - 180),
+        rngSeed: seed + 5000 + bi
+      });
+    }
+
+    var items = generateLavaBounceItem(seed + 888, worldHeight).concat(generateFireTotemItem(seed + 999, worldHeight));
+    var checkpoints = generateCheckpoints(platforms, [], seed + 111);
+    var dots = generateDots(platforms, seed + 444, goal, [], [], cactusDefs);
+
+    return {
+      platforms: platforms,
+      goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      ceilingPoints: [],
+      stalactites: [],
+      bats: [],
+      slimes: [],
+      crawlers: [],
+      cactusDefs: cactusDefs,
+      scorpionDefs: scorpionDefs,
+      buzzardDefs: buzzardDefs,
+      items: items,
+      dots: dots,
+      checkpoints: checkpoints
+    };
+  }
+
+  var DesertBiome = {
+    id: "desert",
+    name: "Desert",
+    assetBasePath: "assets/biomes/desert/audio",
+    generateLevel: function (difficulty, seed, H) {
+      return generateDesertLevelLayout(difficulty, seed, H);
+    }
+  };
+
+  var BIOMES = { default: DefaultBiome, desert: DesertBiome };
+
   // --- Storage
   var LEVELS_STORAGE_KEY = "dragonLevels";
   var PROFILE_STORAGE_KEY = "dragonProfile";
@@ -636,6 +831,7 @@
         data.levels.push({
           id: meta.id,
           name: meta.name,
+          biomeId: "default",
           platforms: layout.platforms,
           goal: layout.goal,
           worldHeight: layout.worldHeight,
@@ -746,10 +942,12 @@
     }
     var dotDefs = levelState.dotDefs.length === NUM_DOTS
       ? levelState.dotDefs
-      : generateDots(platforms, (levelState.currentLevelSeed || 0) + 444, goal, levelState.slimeDefs, levelState.crawlerDefs);
-    data.levels.push({
+      : generateDots(platforms, (levelState.currentLevelSeed || 0) + 444, goal, levelState.slimeDefs || [], levelState.crawlerDefs || []);
+    var biomeId = levelState.biomeId === "desert" ? "desert" : "default";
+    var toPush = {
       id: levelID,
       name: name,
+      biomeId: biomeId,
       platforms: platforms,
       goal: goal,
       worldHeight: levelState.H,
@@ -758,15 +956,19 @@
       bestScore: bestScore,
       bestDots: dots,
       difficulty: levelState.currentDifficulty,
-      slimes: levelState.slimeDefs,
-      ceiling: levelState.ceilingPoints,
-      stalactites: levelState.stalactiteDefs,
-      bats: levelState.batDefs,
-      items: levelState.itemDefs,
+      slimes: levelState.slimeDefs || [],
+      ceiling: levelState.ceilingPoints || [],
+      stalactites: levelState.stalactiteDefs || [],
+      bats: levelState.batDefs || [],
+      items: levelState.itemDefs || [],
       dots: dotDefs,
-      checkpoints: levelState.checkpointDefs,
-      crawlers: levelState.crawlerDefs
-    });
+      checkpoints: levelState.checkpointDefs || [],
+      crawlers: levelState.crawlerDefs || [],
+      cactusDefs: levelState.cactusDefs || [],
+      scorpionDefs: levelState.scorpionDefs || [],
+      buzzardDefs: levelState.buzzardDefs || []
+    };
+    data.levels.push(toPush);
     saveAllLevels(data);
     if (typeof onSaved === "function") onSaved();
   }
@@ -778,55 +980,62 @@
   window.__dragonLevelData = null;
   window.__dragonPopulateLevelDropdown = null;
 
-  function buildLevelDataForNewSeed(seed, difficulty) {
+  function buildLevelDataForNewSeed(seed, difficulty, biomeId) {
     difficulty = difficulty != null ? Math.max(1, Math.min(30, difficulty)) : 15;
     seed = Math.floor(Number(seed)) || 0;
     if (seed <= 0) return null;
-    var layout = generateDefaultLevelLayout(difficulty, seed, WORLD_H);
-    return {
+    biomeId = biomeId || getSelectedBiomeId();
+    var biome = BIOMES[biomeId] || DefaultBiome;
+    var layout = biome.generateLevel(difficulty, seed, WORLD_H);
+    return buildLevelDataFromLayout(layout, {
       currentLevelID: "seed-" + seed,
       currentLevelSeed: seed,
       currentDifficulty: difficulty,
       bestScore: Infinity,
-      platforms: layout.platforms,
-      goal: layout.goal,
-      worldHeight: layout.worldHeight,
-      worldMinY: layout.worldMinY,
-      worldMaxY: layout.worldMaxY,
-      slimeDefs: layout.slimes,
-      ceilingPoints: layout.ceilingPoints,
-      stalactiteDefs: layout.stalactites,
-      batDefs: layout.bats,
-      itemDefs: layout.items,
-      dotDefs: layout.dots,
-      checkpointDefs: layout.checkpoints,
-      crawlerDefs: layout.crawlers
-    };
+      biomeId: biomeId
+    });
   }
 
-  function buildLevelDataForRandom() {
+  function buildLevelDataForRandom(biomeId) {
     var difficulty = Math.floor(Math.random() * (23 - 8 + 1) + 8);
     var seed = Math.floor(Math.random() * 1e9);
-    var layout = generateDefaultLevelLayout(difficulty, seed, WORLD_H);
-    return {
+    biomeId = biomeId || getSelectedBiomeId();
+    var biome = BIOMES[biomeId] || DefaultBiome;
+    var layout = biome.generateLevel(difficulty, seed, WORLD_H);
+    return buildLevelDataFromLayout(layout, {
       currentLevelID: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "rand-" + seed,
       currentLevelSeed: seed,
       currentDifficulty: difficulty,
       bestScore: Infinity,
+      biomeId: biomeId
+    });
+  }
+
+  function buildLevelDataFromLayout(layout, meta) {
+    var data = {
+      currentLevelID: meta.currentLevelID,
+      currentLevelSeed: meta.currentLevelSeed,
+      currentDifficulty: meta.currentDifficulty,
+      bestScore: meta.bestScore != null ? meta.bestScore : Infinity,
+      biomeId: meta.biomeId || "default",
       platforms: layout.platforms,
       goal: layout.goal,
       worldHeight: layout.worldHeight,
       worldMinY: layout.worldMinY,
       worldMaxY: layout.worldMaxY,
-      slimeDefs: layout.slimes,
-      ceilingPoints: layout.ceilingPoints,
-      stalactiteDefs: layout.stalactites,
-      batDefs: layout.bats,
-      itemDefs: layout.items,
-      dotDefs: layout.dots,
-      checkpointDefs: layout.checkpoints,
-      crawlerDefs: layout.crawlers
+      slimeDefs: layout.slimes || [],
+      ceilingPoints: layout.ceilingPoints || [],
+      stalactiteDefs: layout.stalactites || [],
+      batDefs: layout.bats || [],
+      itemDefs: layout.items || [],
+      dotDefs: layout.dots || [],
+      checkpointDefs: layout.checkpoints || [],
+      crawlerDefs: layout.crawlers || [],
+      cactusDefs: layout.cactusDefs || [],
+      scorpionDefs: layout.scorpionDefs || [],
+      buzzardDefs: layout.buzzardDefs || []
     };
+    return data;
   }
 
   function buildLevelDataFromStored(level) {
@@ -835,23 +1044,36 @@
     var worldHeight = level.worldHeight || computeWorldHeightFromPlatforms(platforms);
     var worldMinY = level.worldMinY != null ? level.worldMinY : 0;
     var worldMaxY = level.worldMaxY != null ? level.worldMaxY : worldHeight;
-    var crawlerDefs = Array.isArray(level.crawlers) && level.crawlers.length > 0
-      ? level.crawlers
-      : generateCrawlers(platforms, level.slimes || [], level.difficulty != null ? level.difficulty : 15, (level.seed != null ? level.seed : 0) + 555);
-    var dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
-      ? level.dots
-      : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, level.slimes || [], crawlerDefs);
+    var biomeId = level.biomeId === "desert" ? "desert" : "default";
+    var crawlerDefs = [];
+    var slimeDefs = [];
+    var dotDefs;
+    if (biomeId === "default") {
+      slimeDefs = Array.isArray(level.slimes) ? level.slimes : [];
+      crawlerDefs = Array.isArray(level.crawlers) && level.crawlers.length > 0
+        ? level.crawlers
+        : generateCrawlers(platforms, slimeDefs, level.difficulty != null ? level.difficulty : 15, (level.seed != null ? level.seed : 0) + 555);
+      dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
+        ? level.dots
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, slimeDefs, crawlerDefs);
+    } else {
+      crawlerDefs = [];
+      dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
+        ? level.dots
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, [], [], level.cactusDefs || []);
+    }
     return {
       currentLevelID: level.id,
       currentLevelSeed: level.seed != null ? level.seed : null,
       currentDifficulty: level.difficulty != null ? level.difficulty : null,
       bestScore: level.bestScore,
+      biomeId: biomeId,
       platforms: platforms,
       goal: goal,
       worldHeight: worldHeight,
       worldMinY: worldMinY,
       worldMaxY: worldMaxY,
-      slimeDefs: Array.isArray(level.slimes) ? level.slimes : [],
+      slimeDefs: slimeDefs,
       ceilingPoints: Array.isArray(level.ceiling) ? level.ceiling : [],
       stalactiteDefs: Array.isArray(level.stalactites) ? level.stalactites : [],
       batDefs: Array.isArray(level.bats) ? level.bats : [],
@@ -859,8 +1081,11 @@
       dotDefs: dotDefs,
       checkpointDefs: (Array.isArray(level.checkpoints) && level.checkpoints.length >= 2)
         ? level.checkpoints
-        : generateCheckpoints(platforms, level.slimes || [], (level.seed != null ? level.seed : 0) + 111),
-      crawlerDefs: crawlerDefs
+        : generateCheckpoints(platforms, slimeDefs, (level.seed != null ? level.seed : 0) + 111),
+      crawlerDefs: crawlerDefs,
+      cactusDefs: Array.isArray(level.cactusDefs) ? level.cactusDefs : [],
+      scorpionDefs: Array.isArray(level.scorpionDefs) ? level.scorpionDefs : [],
+      buzzardDefs: Array.isArray(level.buzzardDefs) ? level.buzzardDefs : []
     };
   }
 
@@ -904,6 +1129,25 @@
     this.load.audio("music", "assets/audio/music.mp3");
     this.load.audio("boost", "assets/audio/boost.mp3");
     this.load.audio("dot", "assets/audio/dot.mp3");
+    // Desert biome: optional overrides; same file names under assets/biomes/desert/audio/ (see .cursorrules)
+    var desertBase = "assets/biomes/desert/audio/";
+    this.load.audio("desert_jump", desertBase + "jump.mp3");
+    this.load.audio("desert_death", desertBase + "death.mp3");
+    this.load.audio("desert_shieldLoss", desertBase + "shield-loss.mp3");
+    this.load.audio("desert_lavaHit", desertBase + "lava.mp3");
+    this.load.audio("desert_breath", desertBase + "breath.mp3");
+    this.load.audio("desert_platformStep", desertBase + "platform-step.mp3");
+    this.load.audio("desert_platformFall", desertBase + "platform-fall.mp3");
+    this.load.audio("desert_win", desertBase + "win.mp3");
+    this.load.audio("desert_music", desertBase + "music.mp3");
+    this.load.audio("desert_boost", desertBase + "boost.mp3");
+    this.load.audio("desert_dot", desertBase + "dot.mp3");
+    this.load.audio("desert_checkpoint", desertBase + "checkpoint.mp3");
+    this.load.on("loaderror", function (file) {
+      if (file && file.key && file.key.indexOf("desert_") === 0) {
+        console.warn("[Dragon Lava Jump] Desert audio file missing (see .cursorrules for paths):", file.key);
+      }
+    });
   };
 
   GameScene.prototype.create = function () {
@@ -932,6 +1176,15 @@
     this.currentLevelSeed = data.currentLevelSeed;
     this.currentDifficulty = data.currentDifficulty;
     this.bestScore = data.bestScore != null ? data.bestScore : Infinity;
+    this.biomeId = data.biomeId === "desert" ? "desert" : "default";
+    this.cactusDefs = data.cactusDefs || [];
+    this.scorpionDefs = data.scorpionDefs || [];
+    this.buzzardDefs = data.buzzardDefs || [];
+
+    // Biome-specific colors
+    var platformColor = this.biomeId === "desert" ? 0xc4a574 : 0x8b5cf6;
+    var lavaColor = this.biomeId === "desert" ? 0xb8860b : 0xff4b3e;
+    var goalColor = this.biomeId === "desert" ? 0xdaa520 : 0xffd93d;
 
     // Log this level load into played history (even before completion)
     appendProfileRun({
@@ -972,53 +1225,71 @@
     this.wasOnDoubleJumpPlat = false;
     this.cameraX = 0;
 
-    // Instantiate sounds if loaded
-    this.jumpSound = this.cache.audio.exists("jump") ? this.sound.add("jump", { volume: 0.5 }) : null;
-    this.deathSound = this.cache.audio.exists("death") ? this.sound.add("death", { volume: 0.7 }) : null;
-    this.shieldLossSound = this.cache.audio.exists("shieldLoss") ? this.sound.add("shieldLoss", { volume: 0.7 }) : null;
-    this.lavaHitSound = this.cache.audio.exists("lavaHit") ? this.sound.add("lavaHit", { volume: 0.8 }) : null;
-    this.batSound = this.cache.audio.exists("batChitter") ? this.sound.add("batChitter", { volume: 0.4 }) : null;
-    this.crawlerSound = this.cache.audio.exists("crawlerSlide") ? this.sound.add("crawlerSlide", { volume: 0.7 }) : null;
-    this.slimeSound = this.cache.audio.exists("slimeJump") ? this.sound.add("slimeJump", { volume: 0.5 }) : null;
-    this.breathSound = this.cache.audio.exists("breath") ? this.sound.add("breath", { volume: 0.5 }) : null;
-    this.platformStepSound = this.cache.audio.exists("platformStep") ? this.sound.add("platformStep", { volume: 0.6 }) : null;
-    this.platformFallSound = this.cache.audio.exists("platformFall") ? this.sound.add("platformFall", { volume: 0.6 }) : null;
-    this.winSound = this.cache.audio.exists("win") ? this.sound.add("win", { volume: 0.7 }) : null;
-    this.boostSound = this.cache.audio.exists("boost") ? this.sound.add("boost", { volume: 0.6 }) : null;
-    this.dotSound = this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.8 }) : null;
-    this.checkpointSound = this.cache.audio.exists("checkpoint") ? this.sound.add("checkpoint", { volume: 0.7 }) : (this.cache.audio.exists("dot") ? this.sound.add("dot", { volume: 0.7 }) : null);
+    // Instantiate sounds: Desert overrides default when file exists in assets/biomes/desert/audio/
+    var soundKey = function (defaultK, desertK) {
+      return (this.biomeId === "desert" && this.cache.audio.exists(desertK)) ? desertK : defaultK;
+    }.bind(this);
+    var keyJump = soundKey("jump", "desert_jump");
+    var keyDeath = soundKey("death", "desert_death");
+    var keyShieldLoss = soundKey("shieldLoss", "desert_shieldLoss");
+    var keyLavaHit = soundKey("lavaHit", "desert_lavaHit");
+    var keyBat = soundKey("batChitter", "desert_batChitter");
+    var keyCrawler = soundKey("crawlerSlide", "desert_crawlerSlide");
+    var keySlime = soundKey("slimeJump", "desert_slimeJump");
+    var keyBreath = soundKey("breath", "desert_breath");
+    var keyPlatformStep = soundKey("platformStep", "desert_platformStep");
+    var keyPlatformFall = soundKey("platformFall", "desert_platformFall");
+    var keyWin = soundKey("win", "desert_win");
+    var keyMusic = soundKey("music", "desert_music");
+    var keyBoost = soundKey("boost", "desert_boost");
+    var keyDot = soundKey("dot", "desert_dot");
+    var keyCheckpoint = soundKey("checkpoint", "desert_checkpoint");
+    this.jumpSound = this.cache.audio.exists(keyJump) ? this.sound.add(keyJump, { volume: 0.5 }) : null;
+    this.deathSound = this.cache.audio.exists(keyDeath) ? this.sound.add(keyDeath, { volume: 0.7 }) : null;
+    this.shieldLossSound = this.cache.audio.exists(keyShieldLoss) ? this.sound.add(keyShieldLoss, { volume: 0.7 }) : null;
+    this.lavaHitSound = this.cache.audio.exists(keyLavaHit) ? this.sound.add(keyLavaHit, { volume: 0.8 }) : null;
+    this.batSound = this.cache.audio.exists(keyBat) ? this.sound.add(keyBat, { volume: 0.4 }) : null;
+    this.crawlerSound = this.cache.audio.exists(keyCrawler) ? this.sound.add(keyCrawler, { volume: 0.7 }) : null;
+    this.slimeSound = this.cache.audio.exists(keySlime) ? this.sound.add(keySlime, { volume: 0.5 }) : null;
+    this.breathSound = this.cache.audio.exists(keyBreath) ? this.sound.add(keyBreath, { volume: 0.5 }) : null;
+    this.platformStepSound = this.cache.audio.exists(keyPlatformStep) ? this.sound.add(keyPlatformStep, { volume: 0.6 }) : null;
+    this.platformFallSound = this.cache.audio.exists(keyPlatformFall) ? this.sound.add(keyPlatformFall, { volume: 0.6 }) : null;
+    this.winSound = this.cache.audio.exists(keyWin) ? this.sound.add(keyWin, { volume: 0.7 }) : null;
+    this.boostSound = this.cache.audio.exists(keyBoost) ? this.sound.add(keyBoost, { volume: 0.6 }) : null;
+    this.dotSound = this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.8 }) : null;
+    this.checkpointSound = this.cache.audio.exists(keyCheckpoint) ? this.sound.add(keyCheckpoint, { volume: 0.7 }) : (this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.7 }) : null);
     this.music = null;
-    if (this.cache.audio.exists("music")) {
-      // Reuse a single music instance so it doesn't stack across scene restarts.
-      var existingMusic = (typeof this.sound.get === "function") ? this.sound.get("music") : null;
+    if (this.cache.audio.exists(keyMusic)) {
+      var existingMusic = (typeof this.sound.get === "function") ? this.sound.get(keyMusic) : null;
       if (existingMusic) {
         this.music = existingMusic;
         this.music.setLoop(true);
-        // Ensure mute state matches current setting; don't restart if already playing.
         var enableMusic = isMusicEnabled();
         this.music.setMute(!enableMusic);
-        if (enableMusic && !this.music.isPlaying) {
-          this.music.play();
-        }
+        if (enableMusic && !this.music.isPlaying) this.music.play();
       } else {
-        this.music = this.sound.add("music", { volume: 0.35, loop: true });
-        if (isMusicEnabled()) {
-          this.music.play();
-        } else {
-          this.music.setMute(true);
-        }
+        this.music = this.sound.add(keyMusic, { volume: 0.35, loop: true });
+        if (isMusicEnabled()) this.music.play();
+        else this.music.setMute(true);
       }
     }
 
     this.physics.world.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
     this.physics.world.gravity.y = gravity;
 
+    // Desert: sandy sky background
+    if (this.biomeId === "desert") {
+      var bgY = (this.worldMinY + this.worldMaxY) / 2;
+      var bgH = this.worldMaxY - this.worldMinY + 200;
+      this.add.rectangle(LEVEL_LENGTH / 2, bgY, LEVEL_LENGTH + 100, bgH, 0xedc9a0).setDepth(-10);
+    }
+
     // Platforms (static) - use rectangles; bent is visual only, collision is AABB
     this.platformGroup = this.physics.add.staticGroup();
     this.platformSprites = [];
     for (var i = 0; i < this.platformsData.length; i++) {
       var p = this.platformsData[i];
-      var rect = this.add.rectangle(p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, 0x8b5cf6);
+      var rect = this.add.rectangle(p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, platformColor);
       this.physics.add.existing(rect, true);
       // One-way platforms: collide only on top so you can walk through ends
       rect.body.checkCollision.down = false;
@@ -1030,12 +1301,12 @@
       this.platformSprites.push(rect);
     }
 
-    // Lava zone (physics) + visible lava strip - at bottom of dynamic world
+    // Lava zone (physics) + visible lava/quicksand strip - at bottom of dynamic world
     var lavaCenterY = this.worldMaxY - 30;
-    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY, LEVEL_LENGTH, 60, 0xff4b3e, 0);
+    this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY, LEVEL_LENGTH, 60, lavaColor, 0);
     this.physics.add.existing(this.lavaZone, true);
     this.lavaZone.body.updateFromGameObject = function () {};
-    this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY + 15, LEVEL_LENGTH, 30, 0xff4b3e, 1)
+    this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY + 15, LEVEL_LENGTH, 30, lavaColor, 1)
       .setDepth(0);
     // Keep a cached lava top for bounce positioning
     this.lavaY = this.lavaZone.y - this.lavaZone.height / 2;
@@ -1046,7 +1317,7 @@
       this.goal.y + this.goal.h / 2,
       this.goal.w,
       this.goal.h,
-      0xffd93d
+      goalColor
     );
     this.physics.add.existing(this.goalZone, true);
     this.goalZone.body.updateFromGameObject = function () {};
@@ -1071,9 +1342,22 @@
     this.player.y = startPlat.y - DRAGON_H / 2 - 8;
     this.player.body.setVelocity(0, 0);
 
-    // Slimes (dynamic bodies, no gravity - we animate in update)
+    // Default biome: slimes, bats, crawlers, stalactites. Desert: cacti, scorpions, buzzards.
     this.slimes = [];
     this.slimeEyes = [];
+    this.bats = [];
+    this.batParts = [];
+    this.crawlers = [];
+    this.crawlerEyes = [];
+    this.stalactites = [];
+    this.cacti = [];
+    this.cactusHitboxes = [];
+    this.scorpions = [];
+    this.buzzards = [];
+    this.buzzardParts = [];
+    this.needles = [];
+
+    if (this.biomeId === "default") {
     var slimeW = 22, slimeH = 18;
     for (var si = 0; si < this.slimeDefs.length; si++) {
       var def = this.slimeDefs[si];
@@ -1107,8 +1391,6 @@
     }
 
     // Bats
-    this.bats = [];
-    this.batParts = [];
     for (var bi = 0; bi < this.batDefs.length; bi++) {
       var bdef = this.batDefs[bi];
       // Bright body color so they stand out from the dark background
@@ -1134,8 +1416,6 @@
     }
 
     // Crawlers
-    this.crawlers = [];
-    this.crawlerEyes = [];
     for (var ci = 0; ci < this.crawlerDefs.length; ci++) {
       var cdef = this.crawlerDefs[ci];
       var cplat = this.platformsData[cdef.platformIndex];
@@ -1157,7 +1437,6 @@
     }
 
     // Stalactites (pointy triangles hanging from ceiling + rectangle hitbox)
-    this.stalactites = [];
     for (var sti = 0; sti < this.stalactiteDefs.length; sti++) {
       var st = this.stalactiteDefs[sti];
       var sx = st.x;
@@ -1173,6 +1452,75 @@
       var gfx = this.add.graphics().setDepth(1);
       gfx.fillStyle(0x3f2b63, 1);
       gfx.fillTriangle(sx - sw / 2, sy, sx + sw / 2, sy, sx, sy + sh);
+    }
+    } else if (this.biomeId === "desert") {
+      // Cacti (3 varieties: saguaro, barrel, needle-shooter) - hitbox + visual
+      for (var ci = 0; ci < this.cactusDefs.length; ci++) {
+        var cdef = this.cactusDefs[ci];
+        var cplat = this.platformsData[cdef.platformIndex];
+        if (!cplat) continue;
+        var cx = cplat.x + cdef.offset * cplat.w;
+        var cy = cplat.y - CACTUS_H / 2;
+        var hitbox = this.add.rectangle(cx, cy, CACTUS_W, CACTUS_H, 0x000000, 0);
+        this.physics.add.existing(hitbox, true);
+        hitbox.body.updateFromGameObject = function () {};
+        hitbox.setData("defIndex", ci);
+        hitbox.setData("variety", cdef.variety);
+        hitbox.setData("shakeTimer", 0);
+        hitbox.setData("fired", false);
+        this.cactusHitboxes.push(hitbox);
+        var gfx = this.add.graphics().setDepth(2);
+        if (cdef.variety === 0) {
+          gfx.fillStyle(0x2d5a27, 1);
+          gfx.fillRect(cx - 5, cy - CACTUS_H / 2 + 4, 10, CACTUS_H - 8);
+          gfx.fillStyle(0x3d7a35, 1);
+          gfx.fillRect(cx - 8, cy - 4, 6, 12);
+          gfx.fillRect(cx + 2, cy - 10, 5, 10);
+        } else if (cdef.variety === 1) {
+          gfx.fillStyle(0x4a7c3a, 1);
+          gfx.fillEllipse(cx, cy, 14, CACTUS_H - 4);
+          gfx.fillStyle(0x3a6c2a, 1);
+          gfx.fillEllipse(cx - 4, cy + 4, 6, 10);
+        } else {
+          gfx.fillStyle(0x2d5a27, 1);
+          gfx.fillRect(cx - 4, cy - CACTUS_H / 2 + 2, 8, CACTUS_H - 4);
+          gfx.fillStyle(0x1a3a17, 1);
+          for (var n = 0; n < 6; n++) gfx.fillCircle(cx + (n % 2) * 6 - 3, cy - CACTUS_H / 2 + 6 + n * 6, 2);
+        }
+        this.cacti.push({ hitbox: hitbox, gfx: gfx, def: cdef });
+      }
+      // Scorpions (patrol on platform)
+      for (var sci = 0; sci < this.scorpionDefs.length; sci++) {
+        var sdef = this.scorpionDefs[sci];
+        var splat = this.platformsData[sdef.platformIndex];
+        if (!splat) continue;
+        var sy = splat.y - SCORPION_H / 2;
+        var scorp = this.add.rectangle(sdef.startX, sy, SCORPION_W, SCORPION_H, 0x5c4033);
+        this.physics.add.existing(scorp, false);
+        scorp.body.setAllowGravity(false);
+        scorp.body.setVelocity(0, 0);
+        scorp.setData("left", sdef.left);
+        scorp.setData("right", sdef.right);
+        scorp.setData("direction", sdef.direction);
+        scorp.setData("defIndex", sci);
+        this.scorpions.push(scorp);
+      }
+      // Buzzards (fly like bats)
+      for (var bzi = 0; bzi < this.buzzardDefs.length; bzi++) {
+        var bzdef = this.buzzardDefs[bzi];
+        var buzz = this.add.rectangle(bzdef.x + BUZZARD_W / 2, bzdef.y + BUZZARD_H / 2, BUZZARD_W, BUZZARD_H, 0x4a3728).setDepth(50);
+        this.physics.add.existing(buzz, false);
+        buzz.body.setAllowGravity(false);
+        buzz.body.setVelocity(0, 0);
+        buzz.setData("rng", makeRng(bzdef.rngSeed != null ? bzdef.rngSeed : bzi));
+        buzz.setData("vx", 0);
+        buzz.setData("vy", 0);
+        this.buzzards.push(buzz);
+        var wingL = this.add.rectangle(buzz.x - 8, buzz.y + 2, BUZZARD_W / 2, BUZZARD_H / 2, 0x3d2e22).setDepth(buzz.depth - 1);
+        var wingR = this.add.rectangle(buzz.x + 8, buzz.y + 2, BUZZARD_W / 2, BUZZARD_H / 2, 0x3d2e22).setDepth(buzz.depth - 1);
+        this.buzzardParts.push({ body: buzz, wingL: wingL, wingR: wingR });
+      }
+      this.needleGroup = this.physics.add.group();
     }
 
     // Dots
@@ -1241,10 +1589,17 @@
     this.physics.add.overlap(this.player, this.dotSprites, this.onOverlapDot, null, this);
     this.physics.add.overlap(this.player, this.checkpointZones, this.onOverlapCheckpoint, null, this);
     this.physics.add.overlap(this.player, this.itemZones, this.onOverlapItem, null, this);
-    this.physics.add.overlap(this.player, this.slimes, this.onOverlapSlime, null, this);
-    this.physics.add.overlap(this.player, this.bats, this.onOverlapBat, null, this);
-    this.physics.add.overlap(this.player, this.crawlers, this.onOverlapCrawler, null, this);
-    this.physics.add.overlap(this.player, this.stalactites, this.onOverlapStalactite, null, this);
+    if (this.biomeId === "default") {
+      this.physics.add.overlap(this.player, this.slimes, this.onOverlapSlime, null, this);
+      this.physics.add.overlap(this.player, this.bats, this.onOverlapBat, null, this);
+      this.physics.add.overlap(this.player, this.crawlers, this.onOverlapCrawler, null, this);
+      this.physics.add.overlap(this.player, this.stalactites, this.onOverlapStalactite, null, this);
+    } else if (this.biomeId === "desert") {
+      this.physics.add.overlap(this.player, this.cactusHitboxes, this.onOverlapCactus, null, this);
+      this.physics.add.overlap(this.player, this.scorpions, this.onOverlapScorpion, null, this);
+      this.physics.add.overlap(this.player, this.buzzards, this.onOverlapBuzzard, null, this);
+      this.physics.add.overlap(this.player, this.needleGroup, this.onOverlapNeedle, null, this);
+    }
 
     this.cameras.main.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -1263,6 +1618,16 @@
 
     this.hudText = this.add.text(16, 14, "", { fontSize: "14px", color: "#fff", backgroundColor: "#00000088" }).setScrollFactor(0).setDepth(100);
     if (this.hudText.setPadding) this.hudText.setPadding(8, 4);
+  };
+
+  // Play SFX or log to console when file is missing (see .cursorrules for required files)
+  GameScene.prototype.playSfx = function (soundRef, nameForLog, playOptions) {
+    if (soundRef && isSfxEnabled()) {
+      if (playOptions != null) soundRef.play(playOptions);
+      else soundRef.play();
+    } else if (isSfxEnabled()) {
+      console.warn("[Dragon Lava Jump] Sound not available (missing file):", nameForLog);
+    }
   };
 
   GameScene.prototype.updateHUD = function () {
@@ -1303,11 +1668,11 @@
       if (this.lavaBounceTotalUses >= 3) {
         this.lavaBounceItemCollected = false;
         this.lavaBounceBounces = 0;
-        if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+        this.playSfx(this.shieldLossSound, "shieldLoss");
       }
       return;
     }
-    if (this.lavaHitSound && isSfxEnabled()) this.lavaHitSound.play();
+    this.playSfx(this.lavaHitSound, "lavaHit");
     this.isDyingInLava = true;
     this.lavaDeathTimer = LAVA_DEATH_DURATION;
   };
@@ -1336,7 +1701,7 @@
         callbackScope: this
       });
     }
-    if (this.winSound && isSfxEnabled()) this.winSound.play();
+    this.playSfx(this.winSound, "win");
 
     var enterDuration = 1200;
     this.tweens.add({
@@ -1360,14 +1725,18 @@
       worldMinY: this.worldMinY,
       worldMaxY: this.worldMaxY,
       currentDifficulty: this.currentDifficulty,
-      slimeDefs: this.slimeDefs,
-      ceilingPoints: this.ceilingPoints,
-      stalactiteDefs: this.stalactiteDefs,
-      batDefs: this.batDefs,
-      itemDefs: this.itemDefs,
-      dotDefs: this.dotDefs,
-      checkpointDefs: this.checkpointDefs,
-      crawlerDefs: this.crawlerDefs,
+      biomeId: this.biomeId || "default",
+      slimeDefs: this.slimeDefs || [],
+      ceilingPoints: this.ceilingPoints || [],
+      stalactiteDefs: this.stalactiteDefs || [],
+      batDefs: this.batDefs || [],
+      itemDefs: this.itemDefs || [],
+      dotDefs: this.dotDefs || [],
+      checkpointDefs: this.checkpointDefs || [],
+      crawlerDefs: this.crawlerDefs || [],
+      cactusDefs: this.cactusDefs || [],
+      scorpionDefs: this.scorpionDefs || [],
+      buzzardDefs: this.buzzardDefs || [],
       currentLevelSeed: this.currentLevelSeed
     };
 
@@ -1446,7 +1815,7 @@
     var idx = dot.getData("index");
     this.dotsCollected[idx] = true;
     this.dotsCollectedCount++;
-    if (this.dotSound && isSfxEnabled()) this.dotSound.play();
+    this.playSfx(this.dotSound, "dot");
     dot.setData("collected", true);
     dot.setVisible(false);
     dot.body.checkCollision.none = true;
@@ -1456,7 +1825,7 @@
     var idx = zone.getData("index");
     if (idx > this.lastCheckpointIndex) {
       this.lastCheckpointIndex = idx;
-      if (this.checkpointSound && isSfxEnabled()) this.checkpointSound.play();
+      this.playSfx(this.checkpointSound, "checkpoint");
       var vfx = this.checkpointVfx[idx];
       if (vfx) {
         vfx.flag.fillColor = 0xffd93d;
@@ -1514,6 +1883,22 @@
   };
 
   GameScene.prototype.onOverlapStalactite = function (player, st) {
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapCactus = function (player, hitbox) {
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapScorpion = function (player, scorp) {
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapBuzzard = function (player, buzz) {
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapNeedle = function (player, needle) {
     this.applyDeath();
   };
 
@@ -1591,7 +1976,7 @@
   };
 
   GameScene.prototype.applyDeath = function () {
-    if (!this.isDyingInLava && this.deathSound && isSfxEnabled()) this.deathSound.play();
+    if (!this.isDyingInLava) this.playSfx(this.deathSound, "death");
     this.lives--;
     if (this.lives <= 0) {
       this.lastCheckpointIndex = -1;
@@ -1606,12 +1991,13 @@
     for (var i = 0; i < this.basePlatformsData.length; i++) {
       this.platformsData.push(JSON.parse(JSON.stringify(this.basePlatformsData[i])));
     }
+    var platformColor = this.biomeId === "desert" ? 0xc4a574 : 0x8b5cf6;
     // Rebuild static platform bodies from current platform data
     this.platformGroup.clear(true, true);
     this.platformSprites = [];
     for (var j = 0; j < this.platformsData.length; j++) {
       var p2 = this.platformsData[j];
-      var rect2 = this.add.rectangle(p2.x + p2.w / 2, p2.y + p2.h / 2, p2.w, p2.h, 0x8b5cf6);
+      var rect2 = this.add.rectangle(p2.x + p2.w / 2, p2.y + p2.h / 2, p2.w, p2.h, platformColor);
       this.physics.add.existing(rect2, true);
       rect2.body.checkCollision.down = false;
       rect2.body.checkCollision.left = false;
@@ -1648,7 +2034,8 @@
     this.player.boostFramesLeft = 0;
     this.player.timeInAir = 0;
 
-    // Reset slimes
+    // Reset default biome enemies
+    if (this.biomeId === "default") {
     var slimeW = 22, slimeH = 18;
     for (var si = 0; si < this.slimes.length; si++) {
       var slime = this.slimes[si];
@@ -1730,6 +2117,49 @@
       cInfo.eye1.y = cb.y - 3;
       cInfo.eye2.x = cb.x + 3;
       cInfo.eye2.y = cb.y - 3;
+    }
+    } else if (this.biomeId === "desert") {
+      // Reset scorpions to start positions
+      for (var sci = 0; sci < this.scorpions.length; sci++) {
+        var scorp = this.scorpions[sci];
+        var sdef = this.scorpionDefs[sci];
+        if (sdef) {
+          scorp.x = sdef.startX;
+          scorp.setData("direction", sdef.direction);
+        }
+        var splat = this.platformsData[sdef.platformIndex];
+        if (splat) scorp.y = splat.y - SCORPION_H / 2;
+        scorp.body.updateFromGameObject();
+      }
+      // Reset buzzards to initial positions
+      for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+        var buzz = this.buzzards[bzi];
+        var bzdef = this.buzzardDefs[bzi];
+        if (bzdef) {
+          buzz.x = bzdef.x + BUZZARD_W / 2;
+          buzz.y = bzdef.y + BUZZARD_H / 2;
+        }
+        buzz.body.setVelocity(0, 0);
+        buzz.setData("vx", 0);
+        buzz.setData("vy", 0);
+        buzz.body.updateFromGameObject();
+      }
+      for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
+        var bzInfo = this.buzzardParts[bpi];
+        bzInfo.wingL.x = bzInfo.body.x - 8;
+        bzInfo.wingL.y = bzInfo.body.y + 2;
+        bzInfo.wingR.x = bzInfo.body.x + 8;
+        bzInfo.wingR.y = bzInfo.body.y + 2;
+      }
+      // Reset needle-shooter cacti state
+      for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+        this.cactusHitboxes[cai].setData("shakeTimer", 0);
+        this.cactusHitboxes[cai].setData("fired", false);
+      }
+      // Destroy all needles
+      if (this.needleGroup) {
+        this.needleGroup.clear(true, true);
+      }
     }
 
     this.lavaBounceItemCollected = false;
@@ -1862,7 +2292,7 @@
       this.playerHead.alpha = alpha;
       this.playerEye.alpha = alpha;
       if (this.lavaDeathTimer <= 0) {
-        if (this.deathSound && isSfxEnabled()) this.deathSound.play();
+        this.playSfx(this.deathSound, "death");
         this.applyDeath();
         this.player.alpha = 1;
         this.playerHead.alpha = 1;
@@ -1932,12 +2362,12 @@
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft = 1;
       window.__dragonJumpKeyReleased = false;
-      if (this.jumpSound && isSfxEnabled()) this.jumpSound.play();
+      this.playSfx(this.jumpSound, "jump");
     } else if (keys.jump && !onGround && this.player.jumpsLeft > 0 && window.__dragonJumpKeyReleased) {
       this.player.body.setVelocityY(-jumpStrength);
       this.player.jumpsLeft--;
       window.__dragonJumpKeyReleased = false;
-      if (this.jumpSound && isSfxEnabled()) this.jumpSound.play();
+      this.playSfx(this.jumpSound, "jump");
       this.spawnDoubleJumpPlatform();
     }
 
@@ -1963,7 +2393,7 @@
     if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
       this.player.boostAvailable = false;
       this.player.boostFramesLeft = BOOST_DURATION_SEC;
-      if (this.boostSound && isSfxEnabled()) this.boostSound.play();
+      this.playSfx(this.boostSound, "boost");
     }
     if (this.player.boostFramesLeft > 0) {
       this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * BOOST_POWER_H * dt);
@@ -1973,7 +2403,7 @@
     if (keys.breath && !window.__dragonBreathKeyConsumed && this.fireBreathsLeft > 0 && this.breathActiveTime <= 0) {
       window.__dragonBreathKeyConsumed = true;
       this.breathActiveTime = 10 / REFERENCE_FPS;
-      if (this.breathSound && isSfxEnabled()) this.breathSound.play();
+      this.playSfx(this.breathSound, "breath");
     }
 
     // Fire breath overlap vs slimes/crawlers
@@ -2019,7 +2449,8 @@
       this.breathSprite.setVisible(false);
     }
 
-    // Slimes update
+    // Slimes update (default biome only)
+    if (this.biomeId === "default") {
     for (var si = 0; si < this.slimes.length; si++) {
       var slime = this.slimes[si];
       if (slime.getData("dead")) continue;
@@ -2037,10 +2468,8 @@
         if (timer <= 0) {
           slime.setData("state", "jumping");
           slime.setData("vy", -SLIME_JUMP_STRENGTH);
-          if (this.slimeSound && isSfxEnabled()) {
-            var pv = this.getProximityVolume(slime.x, slime.y);
-            if (pv > 0.06) this.slimeSound.play({ volume: 0.5 * pv });
-          }
+          var pv = this.getProximityVolume(slime.x, slime.y);
+          if (pv > 0.06) this.playSfx(this.slimeSound, "slimeJump", { volume: 0.5 * pv });
         }
       } else {
         slime.x = baseX;
@@ -2101,9 +2530,9 @@
       bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
       bat.body.updateFromGameObject();
       // Occasional bat chitter (rate scales with dt); volume by proximity
-      if (this.batSound && isSfxEnabled() && rng() < 0.4 * dt) {
+      if (rng() < 0.4 * dt) {
         var pv = this.getProximityVolume(bat.x, bat.y);
-        if (pv > 0.06) this.batSound.play({ volume: 0.4 * pv });
+        if (pv > 0.06) this.playSfx(this.batSound, "batChitter", { volume: 0.4 * pv });
       }
     }
     // Keep bat parts attached
@@ -2137,9 +2566,9 @@
       crawler.y = pos.cy;
       var isTop = offset >= 0 && offset < 0.25;
       var isBottom = offset >= 0.5 && offset < 0.75;
-      if (this.crawlerSound && isSfxEnabled() && ((!wasTop && isTop) || (!wasBottom && isBottom))) {
+      if ((!wasTop && isTop) || (!wasBottom && isBottom)) {
         var pv = this.getProximityVolume(crawler.x, crawler.y);
-        if (pv > 0.06) this.crawlerSound.play({ volume: 0.7 * pv });
+        if (pv > 0.06) this.playSfx(this.crawlerSound, "crawlerSlide", { volume: 0.7 * pv });
       }
     }
     // Keep crawler eyes attached
@@ -2155,6 +2584,85 @@
       cInfo.eye1.y = cb.y - 3;
       cInfo.eye2.x = cb.x + 3;
       cInfo.eye2.y = cb.y - 3;
+    }
+    } else if (this.biomeId === "desert") {
+      // Scorpions: patrol back and forth
+      for (var sci = 0; sci < this.scorpions.length; sci++) {
+        var scorp = this.scorpions[sci];
+        var left = scorp.getData("left");
+        var right = scorp.getData("right");
+        var dir = scorp.getData("direction");
+        scorp.x += dir * SCORPION_SPEED * dt;
+        if (scorp.x <= left) { scorp.x = left; scorp.setData("direction", 1); }
+        if (scorp.x >= right) { scorp.x = right; scorp.setData("direction", -1); }
+        scorp.body.updateFromGameObject();
+      }
+      // Buzzards: wander like bats
+      var buzzXMin = 50 + BUZZARD_W / 2, buzzXMax = LEVEL_LENGTH - 50 - BUZZARD_W / 2;
+      var buzzYMin = 80 + BUZZARD_H / 2, buzzYMax = this.WORLD_H - 80 - BUZZARD_H / 2;
+      for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+        var buzz = this.buzzards[bzi];
+        var rng = buzz.getData("rng");
+        var vx = buzz.getData("vx") || 0;
+        var vy = buzz.getData("vy") || 0;
+        vx += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
+        vy += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
+        var speed = Math.sqrt(vx * vx + vy * vy);
+        if (speed > BUZZARD_MAX_SPEED) {
+          vx = (vx / speed) * BUZZARD_MAX_SPEED;
+          vy = (vy / speed) * BUZZARD_MAX_SPEED;
+        }
+        buzz.setData("vx", vx);
+        buzz.setData("vy", vy);
+        buzz.x = Phaser.Math.Clamp(buzz.x + vx * dt, buzzXMin, buzzXMax);
+        buzz.y = Phaser.Math.Clamp(buzz.y + vy * dt, buzzYMin, buzzYMax);
+        buzz.body.updateFromGameObject();
+      }
+      for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
+        var bzInfo = this.buzzardParts[bpi];
+        bzInfo.wingL.x = bzInfo.body.x - 8;
+        bzInfo.wingL.y = bzInfo.body.y + 2;
+        bzInfo.wingR.x = bzInfo.body.x + 8;
+        bzInfo.wingR.y = bzInfo.body.y + 2;
+      }
+      // Needle-shooter cacti (variety 2): when player close, shake then fire 4 needles
+      for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+        var ch = this.cactusHitboxes[cai];
+        if (ch.getData("variety") !== 2 || ch.getData("fired")) continue;
+        var dx = this.player.x - ch.x;
+        var dy = this.player.y - ch.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > CACTUS_NEEDLE_TRIGGER_DIST) continue;
+        var shakeTimer = ch.getData("shakeTimer");
+        if (shakeTimer <= 0) ch.setData("shakeTimer", CACTUS_SHAKE_DURATION);
+        shakeTimer = ch.getData("shakeTimer") - dt;
+        ch.setData("shakeTimer", shakeTimer);
+        if (shakeTimer <= 0) {
+          ch.setData("fired", true);
+          var numNeedles = CACTUS_NEEDLE_COUNT;
+          for (var ni = 0; ni < numNeedles; ni++) {
+            var angle = (ni / numNeedles) * Math.PI * 2 + (cai * 0.5);
+            var vx = Math.cos(angle) * NEEDLE_SPEED;
+            var vy = Math.sin(angle) * NEEDLE_SPEED;
+            var needle = this.add.rectangle(ch.x, ch.y, NEEDLE_R * 2, NEEDLE_R * 2, 0x1a3a17);
+            this.physics.add.existing(needle, false);
+            needle.body.setVelocity(vx, vy);
+            needle.body.setAllowGravity(false);
+            needle.setData("birthTime", time / 1000);
+            this.needleGroup.add(needle);
+          }
+        }
+      }
+      // Needles: remove when off screen or too old
+      var needleChildren = this.needleGroup.getChildren();
+      for (var ni = needleChildren.length - 1; ni >= 0; ni--) {
+        var n = needleChildren[ni];
+        if (!n.active) continue;
+        var age = (time / 1000) - (n.getData("birthTime") || 0);
+        if (age > 3 || n.x < -50 || n.x > LEVEL_LENGTH + 50 || n.y < this.worldMinY - 50 || n.y > this.worldMaxY + 50) {
+          n.destroy();
+        }
+      }
     }
 
     // Animate item VFX (orb pulse, flame wobble), hide when collected
@@ -2204,13 +2712,13 @@
         var pv = this.getProximityVolume(platCx, platCy);
         if (!p.dropActive) {
           p.dropActive = true;
-          if (this.platformStepSound && isSfxEnabled() && pv > 0.06) this.platformStepSound.play({ volume: 0.6 * pv });
+          if (pv > 0.06) this.playSfx(this.platformStepSound, "platformStep", { volume: 0.6 * pv });
         }
         if (p.dropTimer > 0) {
           p.dropTimer -= dt;
           if (p.dropTimer <= 0) {
             p.dropping = true;
-            if (this.platformFallSound && isSfxEnabled() && pv > 0.06) this.platformFallSound.play({ volume: 0.6 * pv });
+            if (pv > 0.06) this.playSfx(this.platformFallSound, "platformFall", { volume: 0.6 * pv });
           }
         }
       }
@@ -2362,7 +2870,10 @@
     var hashDifficulty = parts.length > 1 ? parseInt(parts[1], 10) : 15;
     if (isNaN(hashSeed) || hashSeed <= 0) return false;
     var difficulty = (!isNaN(hashDifficulty) && hashDifficulty >= 1 && hashDifficulty <= 30) ? hashDifficulty : 15;
-    window.__dragonLevelData = buildLevelDataForNewSeed(hashSeed, difficulty);
+    var hashBiome = (parts.length > 2 && (parts[2] === "desert" || parts[2] === "default")) ? parts[2] : getSelectedBiomeId();
+    if (hashBiome && document.getElementById("biomeSelect")) document.getElementById("biomeSelect").value = hashBiome;
+    setSelectedBiomeId(hashBiome);
+    window.__dragonLevelData = buildLevelDataForNewSeed(hashSeed, difficulty, hashBiome);
     return true;
   }
 
@@ -2379,6 +2890,24 @@
     populatePlayedDropdown();
     window.__dragonPopulateLevelDropdown = populateLevelDropdown;
     window.__dragonPopulatePlayedDropdown = populatePlayedDropdown;
+
+    // Biome selector: default (Cave) and desert
+    var biomeSelect = document.getElementById("biomeSelect");
+    if (biomeSelect) {
+      biomeSelect.innerHTML = "";
+      var optDefault = document.createElement("option");
+      optDefault.value = "default";
+      optDefault.textContent = "Cave";
+      biomeSelect.appendChild(optDefault);
+      var optDesert = document.createElement("option");
+      optDesert.value = "desert";
+      optDesert.textContent = "Desert";
+      biomeSelect.appendChild(optDesert);
+      biomeSelect.value = getSelectedBiomeId();
+      biomeSelect.addEventListener("change", function () {
+        setSelectedBiomeId(biomeSelect.value);
+      });
+    }
 
     // Difficulty dropdown (random or 1-30), persisted in localStorage
     var diffSelect = document.getElementById("difficultySelect");
@@ -2598,7 +3127,8 @@
           var ld = window.__dragonLevelData;
           if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
             var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
-            location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "");
+            var b = (ld.biomeId === "desert") ? "/desert" : "";
+            location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "") + b;
           } else {
             location.hash = "";
           }
@@ -2620,7 +3150,7 @@
         if (!seed || seed <= 0 || isNaN(diff)) return;
         if (diff < 1 || diff > 30) diff = 15;
         window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
-        location.hash = seed + "/" + diff;
+        location.hash = seed + "/" + diff + (getSelectedBiomeId() === "desert" ? "/desert" : "");
         var overlay = document.getElementById("winOverlay");
         if (overlay) overlay.style.display = "none";
         startOrRestartGame();
@@ -2637,7 +3167,7 @@
         var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
         var seed = Math.floor(Math.random() * 1000000000) + 1;
         window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
-        location.hash = seed + "/" + diff;
+        location.hash = seed + "/" + diff + (getSelectedBiomeId() === "desert" ? "/desert" : "");
       }
       var overlay = document.getElementById("winOverlay");
       if (overlay) overlay.style.display = "none";
@@ -2652,7 +3182,8 @@
         return;
       }
       var difficulty = (data && data.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(data.currentDifficulty))) : null;
-      var url = location.origin + location.pathname + "#" + seed + (difficulty != null ? "/" + difficulty : "");
+      var biomeId = (data && data.biomeId) || "default";
+      var url = location.origin + location.pathname + "#" + seed + (difficulty != null ? "/" + difficulty : "") + (biomeId === "desert" ? "/desert" : "");
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(function () {
           var btn = document.getElementById("shareBtn");
@@ -2677,7 +3208,8 @@
       var ld = window.__dragonLevelData;
       if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
         var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
-        location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "");
+        var b = (ld.biomeId === "desert") ? "/desert" : "";
+        location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "") + b;
       } else {
         location.hash = "";
       }
@@ -2696,7 +3228,7 @@
           var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
           var seed = Math.floor(Math.random() * 1000000000) + 1;
           window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
-          location.hash = seed + "/" + diff;
+          location.hash = seed + "/" + diff + (getSelectedBiomeId() === "desert" ? "/desert" : "");
         }
         document.getElementById("winOverlay").style.display = "none";
         startOrRestartGame();
@@ -2714,7 +3246,7 @@
           var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
           var seed = Math.floor(Math.random() * 1000000000) + 1;
           window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
-          location.hash = seed + "/" + diff;
+          location.hash = seed + "/" + diff + (getSelectedBiomeId() === "desert" ? "/desert" : "");
         }
         document.getElementById("winOverlay").style.display = "none";
         startOrRestartGame();
