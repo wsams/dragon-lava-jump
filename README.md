@@ -5,7 +5,7 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 ## About the game
 
 - **Goal:** Reach the golden door at the end of the level before running out of lives. Collect dots, avoid or defeat slimes, bats, and crawlers, and use lava bounces and power-ups to get ahead.
-- **Movement:** Run left/right, jump (including double jump in mid-air), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
+- **Movement:** Run left/right, jump (including double jump in mid-air), slam down (hold Down/S in the air to drop fast), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
 - **Hazards:** Lava (instant death unless you have a lava bounce), slimes, bats, crawlers, and stalactites. Checkpoints and extra lives help you progress.
 - **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem).
 
@@ -16,10 +16,11 @@ Open `dragonlavajump.html` in a browser, or serve the project folder with any st
 ## Controls
 
 - **Arrow keys / A,D:** Move left and right  
+- **Down arrow / S:** Slam down (in the air only—drop straight down at a fast speed, Tetris-style)  
 - **Space:** Jump (double jump allowed once per air time)  
 - **F:** Air boost (forward dash in the air, once per jump)  
 - **G:** Fire breath (when you have the fire totem)  
-- On-screen buttons are available for touch devices.
+- On-screen buttons are available for touch devices (including a Down button below Left/Right for slam down).
 
 ## Credits
 
