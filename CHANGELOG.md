@@ -12,6 +12,9 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ### Added
 
+- **Score system:** Points for dots (10), creature kills (25), power-ups (50), and win (100), scaled by difficulty so harder levels award more. Score is shown in the HUD (current + best for level). Scores are stored per level per user in `dragonScores` (localStorage); user is profile username or `"anonymous"`. Only completed (won) runs are logged. Win overlay shows score and best score; level dropdown shows best time, best score, and dots. `addScore()`, `getScoreUserId()`, `loadScores()`, `saveScores()`, `pushScoreForLevel(levelId, userId, score, timeSeconds)`, `getBestScoreForLevel()`, `getLevelLeaderboard(levelId)`.
+- **Leaderboard:** “Leaderboard” button in the menu shows an overlay with every completed run for the selected level (rank, player, score, time), sorted by score. Only wins appear; incomplete runs are never stored. Empty state message when no runs. `.cursorrules` updated with Score and Leaderboard sections.
+
 - **Slam down:** Hold Down (↓) or S while in the air to drop straight down at a fixed fast speed (Tetris-style). Not instant—uses `SLAM_DOWN_VY` for a quick animation. Use to avoid hazards. Keyboard: ArrowDown, KeyS. Onscreen: horizontal Down button between Left and Right (75% height). Documented in `.cursorrules` Player Mechanics.
 
 - **Biome system**

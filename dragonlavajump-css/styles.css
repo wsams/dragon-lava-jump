@@ -185,6 +185,63 @@ select, #menu button {
 .win-actions #winNextLevelBtn:hover {
   background: linear-gradient(to bottom, #fbbf24, #ea580c);
 }
+#leaderboardOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.65);
+  pointer-events: auto;
+}
+.leaderboard-panel {
+  position: relative;
+  background: linear-gradient(145deg, #2d2640 0%, #1a1730 100%);
+  border: 2px solid rgba(255,220,120,0.4);
+  border-radius: 12px;
+  padding: 24px 32px;
+  min-width: 280px;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.leaderboard-title {
+  margin: 0 0 4px 0;
+  font-size: 22px;
+  color: #ffd93d;
+}
+.leaderboard-subtitle {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #a0a0a0;
+}
+.leaderboard-content {
+  overflow: auto;
+  font-size: 14px;
+  color: #e8e0e0;
+}
+.leaderboard-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.leaderboard-content th,
+.leaderboard-content td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.leaderboard-content th {
+  color: #ffd93d;
+  font-weight: 600;
+}
+.leaderboard-empty {
+  margin: 12px 0 0 0;
+  font-size: 14px;
+  color: #a0a0a0;
+}
 #onscreen-controls {
   display: flex;
   justify-content: space-between;

@@ -773,11 +773,19 @@
     return layout;
   }
 
+  // --- Score (difficulty-scaled; stored per level per user)
+  var POINTS_DOT = 10;
+  var POINTS_KILL = 25;
+  var POINTS_POWERUP = 50;
+  var POINTS_WIN = 100;
+  var SCORE_DIFFICULTY_FACTOR = 0.08;  // per difficulty step: mult = 1 + (diff - 1) * this
+
   // --- Storage
   var LEVELS_STORAGE_KEY = "dragonLevels";
   var PROFILE_STORAGE_KEY = "dragonProfile";
   var AUDIO_STORAGE_KEY = "dragonAudio";
   var DIFFICULTY_STORAGE_KEY = "dragonDifficulty";
+  var SCORES_STORAGE_KEY = "dragonScores";
   var DEFAULT_LEVELS = [
     { id: "pack-01", name: "1 Lava Warmup", difficulty: 1, seed: 101 },
     { id: "pack-02", name: "2 Baby Dragon Steps", difficulty: 2, seed: 102 },
@@ -836,6 +844,68 @@
   function getProfileUsername() {
     var p = loadProfile();
     return p.username || "";
+  }
+
+  function getScoreUserId() {
+    var u = getProfileUsername();
+    return (u && String(u).trim()) ? String(u).trim() : "anonymous";
+  }
+
+  function loadScores() {
+    try {
+      var raw = localStorage.getItem(SCORES_STORAGE_KEY);
+      if (!raw) return {};
+      var data = JSON.parse(raw);
+      return data && typeof data === "object" ? data : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveScores(data) {
+    try {
+      localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {}
+  }
+
+  function pushScoreForLevel(levelId, userId, score, timeSeconds) {
+    var data = loadScores();
+    if (!levelId) return;
+    if (!data[levelId]) data[levelId] = {};
+    if (!Array.isArray(data[levelId][userId])) data[levelId][userId] = [];
+    data[levelId][userId].push({ score: score, time: typeof timeSeconds === "number" ? timeSeconds : 0 });
+    saveScores(data);
+  }
+
+  function getBestScoreForLevel(levelId, userId) {
+    var data = loadScores();
+    if (!levelId || !data[levelId] || !Array.isArray(data[levelId][userId]) || !data[levelId][userId].length) return 0;
+    var arr = data[levelId][userId];
+    var best = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var s = typeof arr[i] === "object" && arr[i] != null ? arr[i].score : arr[i];
+      if (s > best) best = s;
+    }
+    return best;
+  }
+
+  function getLevelLeaderboard(levelId) {
+    var data = loadScores();
+    if (!levelId || !data[levelId]) return [];
+    var list = [];
+    for (var uid in data[levelId]) {
+      if (!Object.prototype.hasOwnProperty.call(data[levelId], uid)) continue;
+      var runs = data[levelId][uid];
+      if (!Array.isArray(runs)) continue;
+      for (var r = 0; r < runs.length; r++) {
+        var run = runs[r];
+        var score = typeof run === "object" && run != null ? run.score : run;
+        var time = typeof run === "object" && run != null && typeof run.time === "number" ? run.time : 0;
+        list.push({ userId: uid, score: score, time: time });
+      }
+    }
+    list.sort(function (a, b) { return b.score - a.score; });
+    return list;
   }
 
   function setProfileUsername(name) {
@@ -1328,6 +1398,8 @@
     this.breathActiveTime = 0;
     this.dotsCollected = this.dotDefs.map(function () { return false; });
     this.dotsCollectedCount = 0;
+    this.score = 0;
+    this.bestScorePoints = getBestScoreForLevel(this.currentLevelID || "", getScoreUserId());
     this.standingPlatformIndex = -1;
     this.doubleJumpUsedThisFlight = false;  // only reset when landing on real platform; gates exactly one double jump per flight
     this.doubleJumpPlatform = null;
@@ -1739,8 +1811,15 @@
     }
   };
 
+  GameScene.prototype.addScore = function (points) {
+    var diff = Math.max(1, Math.min(30, typeof this.currentDifficulty === "number" ? this.currentDifficulty : 1));
+    var mult = 1 + (diff - 1) * SCORE_DIFFICULTY_FACTOR;
+    this.score += Math.round(points * mult);
+  };
+
   GameScene.prototype.updateHUD = function () {
-    var bestStr = (this.bestScore !== Infinity && isFinite(this.bestScore)) ? this.bestScore.toFixed(2) : "--";
+    var bestTimeStr = (this.bestScore !== Infinity && isFinite(this.bestScore)) ? this.bestScore.toFixed(2) : "--";
+    var bestScoreStr = (this.bestScorePoints != null && this.bestScorePoints > 0) ? String(this.bestScorePoints) : "--";
     var livesStr = "\u2665".repeat(this.lives) + "\u2661".repeat(LIVES_START - this.lives);
     var diffStr = this.currentDifficulty != null ? " (Diff " + Math.max(1, Math.min(30, Math.floor(this.currentDifficulty))) + ")" : "";
     var levelStr = (this.currentLevelSeed != null && this.currentLevelSeed > 0) ? String(this.currentLevelSeed) : (this.currentLevelID || "--");
@@ -1751,7 +1830,7 @@
       lavaStr = "\nLava: " + lavaLeft + " left";
     }
     this.hudText.setText(
-      "Time: " + this.currentTime.toFixed(2) + "  Best: " + bestStr + "\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr
+      "Score: " + this.score + "  Best: " + bestScoreStr + "  Time: " + this.currentTime.toFixed(2) + "s\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr
     );
   };
 
@@ -1790,6 +1869,7 @@
   GameScene.prototype.onOverlapGoal = function (player, zone) {
     if (this.gameWon) return;
     this.gameWon = true;
+    this.addScore(POINTS_WIN);
     this.winSequenceState = "entering";
 
     this.player.body.setVelocity(0, 0);
@@ -1867,7 +1947,8 @@
       difficulty: this.currentDifficulty != null ? this.currentDifficulty : null,
       timeSeconds: this.currentTime,
       dotsCollected: this.dotsCollectedCount,
-      dotsTotal: NUM_DOTS
+      dotsTotal: NUM_DOTS,
+      score: this.score
     });
     if (typeof window.__dragonPopulatePlayedDropdown === "function") window.__dragonPopulatePlayedDropdown();
 
@@ -1925,6 +2006,7 @@
     var idx = dot.getData("index");
     this.dotsCollected[idx] = true;
     this.dotsCollectedCount++;
+    this.addScore(POINTS_DOT);
     this.playSfx(this.dotSound, "dot");
     dot.setData("collected", true);
     dot.setVisible(false);
@@ -1947,6 +2029,7 @@
   GameScene.prototype.onOverlapItem = function (player, zone) {
     if (zone.getData("collected")) return;
     var it = zone.getData("item");
+    this.addScore(POINTS_POWERUP);
     if (it.type === "lavaBounce") {
       // Lava orb: grants lava bounces (2 per run) until 3 total uses or hit by enemy.
       this.lavaBounceItemCollected = true;
@@ -2034,6 +2117,7 @@
   GameScene.prototype.killSlime = function (slime) {
     if (slime.getData("dead")) return;
     slime.setData("dead", true);
+    this.addScore(POINTS_KILL);
     slime.body.checkCollision.none = true;
     // Hide eyes immediately
     for (var i = 0; i < this.slimeEyes.length; i++) {
@@ -2058,6 +2142,7 @@
   GameScene.prototype.killCrawler = function (crawler) {
     if (crawler.getData("dead")) return;
     crawler.setData("dead", true);
+    this.addScore(POINTS_KILL);
     crawler.body.checkCollision.none = true;
     // Hide eyes immediately
     for (var i = 0; i < this.crawlerEyes.length; i++) {
@@ -2080,6 +2165,7 @@
   };
 
   GameScene.prototype.killBat = function (bat) {
+    this.addScore(POINTS_KILL);
     // Find visual parts for this bat
     var parts = null;
     for (var i = 0; i < this.batParts.length; i++) {
@@ -2106,6 +2192,7 @@
   GameScene.prototype.killScorpion = function (scorp) {
     if (scorp.getData("dead")) return;
     scorp.setData("dead", true);
+    this.addScore(POINTS_KILL);
     if (scorp.body) scorp.body.checkCollision.none = true;
     this.tweens.add({
       targets: scorp,
@@ -2122,6 +2209,7 @@
   GameScene.prototype.killBuzzard = function (buzz) {
     if (buzz.getData("dead")) return;
     buzz.setData("dead", true);
+    this.addScore(POINTS_KILL);
     if (buzz.body) buzz.body.checkCollision.none = true;
     var parts = null;
     for (var i = 0; i < this.buzzardParts.length; i++) {
@@ -2154,6 +2242,7 @@
   };
 
   GameScene.prototype.resetPlayer = function () {
+    if (this.lastCheckpointIndex === -1) this.score = 0;
     // Restore platforms from base (drop platforms reset)
     this.platformsData.length = 0;
     for (var i = 0; i < this.basePlatformsData.length; i++) {
@@ -2381,6 +2470,9 @@
   GameScene.prototype.showWinOverlay = function (fadeIn) {
     var el = document.getElementById("winOverlay");
     if (!el) return;
+    var userId = getScoreUserId();
+    pushScoreForLevel(this.currentLevelID || "", userId, this.score, this.currentTime);
+    if (this.score > (this.bestScorePoints || 0)) this.bestScorePoints = this.score;
     if (fadeIn) {
       el.style.display = "flex";
       el.style.opacity = "0";
@@ -2397,14 +2489,16 @@
       el.style.transition = "";
     }
     var timeEl = document.getElementById("winTime");
+    var scoreEl = document.getElementById("winScore");
     var dotsEl = document.getElementById("winDots");
     var bestEl = document.getElementById("winBest");
     if (timeEl) timeEl.textContent = "Time: " + this.currentTime.toFixed(2) + "s";
+    if (scoreEl) scoreEl.textContent = String(this.score);
     if (dotsEl) dotsEl.textContent = this.dotsCollectedCount + "/" + NUM_DOTS;
     if (bestEl) {
-      if (this.bestScore !== Infinity && Math.abs(this.currentTime - this.bestScore) < 0.01) bestEl.textContent = "New best!";
-      else if (this.bestScore !== Infinity) bestEl.textContent = "Best: " + this.bestScore.toFixed(2) + "s";
-      else bestEl.textContent = "Best: --";
+      if (this.score === this.bestScorePoints && this.bestScorePoints > 0) bestEl.textContent = "Best score: " + this.bestScorePoints + " (new!)";
+      else if (this.bestScorePoints != null && this.bestScorePoints > 0) bestEl.textContent = "Best score: " + this.bestScorePoints;
+      else bestEl.textContent = "Best score: --";
     }
     var nextBtn = document.getElementById("winNextLevelBtn");
     if (nextBtn) {
@@ -3000,12 +3094,15 @@
     optNew.value = "new";
     optNew.textContent = "New Random Level";
     select.appendChild(optNew);
+    var userId = getScoreUserId();
     data.levels.forEach(function (lvl) {
       var opt = document.createElement("option");
       opt.value = lvl.id;
       var best = (typeof lvl.bestScore === "number" && isFinite(lvl.bestScore)) ? lvl.bestScore.toFixed(2) + "s" : "--";
+      var bestScorePt = getBestScoreForLevel(lvl.id, userId);
+      var scoreStr = bestScorePt > 0 ? String(bestScorePt) : "--";
       var bestDots = (typeof lvl.bestDots === "number" && lvl.bestDots > 0) ? lvl.bestDots + "/" + NUM_DOTS : "--";
-      opt.textContent = lvl.name + " (Best: " + best + ", Dots: " + bestDots + ")";
+      opt.textContent = lvl.name + " (Best: " + best + ", Score: " + scoreStr + ", Dots: " + bestDots + ")";
       select.appendChild(opt);
     });
   }
@@ -3413,6 +3510,74 @@
         window.prompt("Copy this link:", url);
       }
     });
+
+    function getLevelDisplayName(levelId) {
+      if (!levelId) return "Level";
+      var data = loadAllLevels(WORLD_H);
+      var level = data.levels && data.levels.find(function (l) { return l.id === levelId; });
+      if (level && level.name) return level.name;
+      var ld = window.__dragonLevelData;
+      if (ld && ld.currentLevelID === levelId) {
+        if (ld.currentLevelSeed != null && ld.currentLevelSeed > 0) {
+          var diff = ld.currentDifficulty != null ? " (Diff " + Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) + ")" : "";
+          var biome = ld.biomeId === "desert" ? " Desert" : "";
+          return "Seed " + ld.currentLevelSeed + diff + biome;
+        }
+        return "Random level";
+      }
+      if (String(levelId).indexOf("seed-") === 0) return levelId.replace("seed-", "Seed ");
+      if (String(levelId).indexOf("rand-") === 0) return "Random level";
+      return levelId;
+    }
+
+    function showLeaderboardForLevel(levelId) {
+      var overlay = document.getElementById("leaderboardOverlay");
+      var nameEl = document.getElementById("leaderboardLevelName");
+      var contentEl = document.getElementById("leaderboardContent");
+      var emptyEl = document.getElementById("leaderboardEmpty");
+      if (!overlay || !contentEl) return;
+      if (!levelId || levelId === "new") {
+        window.alert("Start or select a level to view its leaderboard.");
+        return;
+      }
+      var levelName = getLevelDisplayName(levelId);
+      if (nameEl) nameEl.textContent = levelName;
+      var list = getLevelLeaderboard(levelId);
+      if (list.length === 0) {
+        contentEl.innerHTML = "";
+        if (emptyEl) emptyEl.style.display = "block";
+      } else {
+        if (emptyEl) emptyEl.style.display = "none";
+        var html = "<table><thead><tr><th>#</th><th>Player</th><th>Score</th><th>Time</th></tr></thead><tbody>";
+        for (var i = 0; i < list.length; i++) {
+          var row = list[i];
+          var user = (row.userId || "anonymous").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          var timeStr = (typeof row.time === "number" && isFinite(row.time) && row.time > 0) ? row.time.toFixed(2) + "s" : "--";
+          html += "<tr><td>" + (i + 1) + "</td><td>" + user + "</td><td>" + row.score + "</td><td>" + timeStr + "</td></tr>";
+        }
+        html += "</tbody></table>";
+        contentEl.innerHTML = html;
+      }
+      overlay.style.display = "flex";
+    }
+
+    document.getElementById("leaderboardBtn").addEventListener("click", function () {
+      var scene = window.__dragonGame && window.__dragonGame.scene.getScene("Game");
+      var levelId = (scene && scene.currentLevelID) ? scene.currentLevelID : null;
+      if (!levelId) {
+        var select = document.getElementById("levelSelect");
+        levelId = select ? select.value : "";
+      }
+      showLeaderboardForLevel(levelId);
+    });
+
+    var leaderboardCloseBtn = document.getElementById("leaderboardCloseBtn");
+    if (leaderboardCloseBtn) {
+      leaderboardCloseBtn.addEventListener("click", function () {
+        var overlay = document.getElementById("leaderboardOverlay");
+        if (overlay) overlay.style.display = "none";
+      });
+    }
 
     document.getElementById("winNextLevelBtn").addEventListener("click", function () {
       var data = loadAllLevels(WORLD_H);

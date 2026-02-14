@@ -17,6 +17,7 @@
     <select id="difficultySelect" title="Difficulty (affects level generation)"></select>
     <button id="newLevelBtn" type="button" title="New random level">New</button>
     <button id="shareBtn" type="button" aria-label="Share" title="Copy level link to clipboard">⤴</button>
+    <button id="leaderboardBtn" type="button" title="View leaderboard for selected level">Leaderboard</button>
     <button id="muteSfxBtn" type="button" aria-label="Toggle SFX" title="Mute / unmute sound effects"></button>
     <button id="muteMusicBtn" type="button" aria-label="Toggle music" title="Mute / unmute music"></button>
     <div id="userForm">
@@ -34,6 +35,7 @@
           <button type="button" id="winCloseBtn" class="win-close" aria-label="Close">×</button>
           <h2 class="win-title">You Win!</h2>
           <p class="win-stat"><span id="winTime">Time: 0.00s</span></p>
+          <p class="win-stat">Score: <span id="winScore">0</span></p>
           <p class="win-stat">Dots: <span id="winDots">0/30</span></p>
           <p class="win-stat"><span id="winBest">Best: --</span></p>
           <div class="win-actions">
@@ -41,6 +43,15 @@
             <button type="button" id="winReplayBtn">Replay</button>
             <button type="button" id="winNewLevelBtn">New level</button>
           </div>
+        </div>
+      </div>
+      <div id="leaderboardOverlay" style="display: none;">
+        <div class="leaderboard-panel">
+          <button type="button" id="leaderboardCloseBtn" class="win-close" aria-label="Close">×</button>
+          <h2 class="leaderboard-title">Level leaderboard</h2>
+          <p id="leaderboardLevelName" class="leaderboard-subtitle"></p>
+          <div id="leaderboardContent" class="leaderboard-content"></div>
+          <p id="leaderboardEmpty" class="leaderboard-empty" style="display: none;">No completed runs yet. Win the level to appear here.</p>
         </div>
       </div>
     </div>
