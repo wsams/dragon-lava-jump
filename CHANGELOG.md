@@ -8,6 +8,8 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ### Added
 
+- **Slam down:** Hold Down (↓) or S while in the air to drop straight down at a fixed fast speed (Tetris-style). Not instant—uses `SLAM_DOWN_VY` for a quick animation. Use to avoid hazards. Keyboard: ArrowDown, KeyS. Onscreen: horizontal Down button between Left and Right (75% height). Documented in `.cursorrules` Player Mechanics.
+
 - **Biome system**
   - Abstract biome concept: each biome has its own level layout generator and entity set (creatures, obstacles, power-ups).
   - Biome registry in `game-phaser.js`: `BIOMES.default` (Cave) and `BIOMES.desert` (Desert).

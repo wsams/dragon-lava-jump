@@ -45,6 +45,7 @@
   var BOOST_DURATION_SEC = 14 / REFERENCE_FPS;
   var BOOST_POWER_H = (72 / 12) * REFERENCE_FPS * REFERENCE_FPS;
   var maxUpwardVy = -jumpStrength - 0.5 * REFERENCE_FPS;
+  var SLAM_DOWN_VY = 550;  // px/s when holding down in air (fast drop, not instant)
   // Stronger lava bounce (approx a jump or higher)
   var LAVA_BOUNCE_VY = -jumpStrength * 1.1;
   var LAVA_DEATH_DURATION = 35 / REFERENCE_FPS;
@@ -1080,7 +1081,7 @@
   }
 
   // --- Global input and level data (set by UI, read by scene)
-  window.__dragonKeys = { left: false, right: false, jump: false, boost: false, breath: false };
+  window.__dragonKeys = { left: false, right: false, jump: false, boost: false, breath: false, down: false };
   window.__dragonJumpKeyReleased = true;
   window.__dragonBreathKeyConsumed = false;
   window.__dragonLevelData = null;
@@ -2412,7 +2413,7 @@
     }
 
     var keys = window.__dragonKeys;
-    if (!this.timerStarted && (keys.left || keys.right || keys.jump || keys.boost || keys.breath)) {
+    if (!this.timerStarted && (keys.left || keys.right || keys.jump || keys.boost || keys.breath || keys.down)) {
       this.timerStarted = true;
       this.startTime = time / 1000;
     }
@@ -2522,6 +2523,12 @@
       }
     } else {
       this.wasOnDoubleJumpPlat = false;
+    }
+
+    // Slam down: hold Down in air to drop fast (Tetris-style), not instant
+    if (!onGround && keys.down) {
+      var vy = this.player.body.velocity.y;
+      if (vy < SLAM_DOWN_VY) this.player.body.setVelocityY(SLAM_DOWN_VY);
     }
 
     if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
@@ -3176,6 +3183,7 @@
       var keys = window.__dragonKeys;
       if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = true;
       if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = true;
+      if (e.code === "ArrowDown" || e.code === "KeyS") keys.down = true;
       if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") keys.jump = true;
       if (e.code === "KeyF") keys.boost = true;
       if (e.code === "KeyG") keys.breath = true;
@@ -3188,6 +3196,7 @@
       var keys = window.__dragonKeys;
       if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = false;
       if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = false;
+      if (e.code === "ArrowDown" || e.code === "KeyS") keys.down = false;
       if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
         keys.jump = false;
         window.__dragonJumpKeyReleased = true;
@@ -3230,6 +3239,7 @@
       // doesn't stop movement; release happens only on up/cancel.
     }
     bindBtn("btnLeft", "left");
+    bindBtn("btnDown", "down");
     bindBtn("btnRight", "right");
     bindBtn("btnJump", "jump");
     bindBtn("btnBoost", "boost");

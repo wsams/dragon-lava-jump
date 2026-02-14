@@ -202,6 +202,40 @@ select, #menu button {
   align-items: stretch;
   pointer-events: auto;
 }
+#onscreen-controls .move-group {
+  flex-direction: column;
+  gap: 4px;
+  width: fit-content;
+  /* So Down bar = Left (56px) + gap (4px) + Right (80px) */
+  min-width: 140px;
+}
+#onscreen-controls .move-row {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+}
+#onscreen-controls .move-row:first-child .btn-wrap {
+  flex-shrink: 0;
+}
+#onscreen-controls .move-row:last-child {
+  width: 100%;
+  min-width: 0;
+}
+#onscreen-controls .btn-down-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+#onscreen-controls #btnDown {
+  width: 100%;
+  min-width: 44px;
+  max-width: 100%;
+  height: 75%;
+  min-height: 60px;
+  background: linear-gradient(to bottom, #6b7280, #9ca3af);
+}
 #onscreen-controls .btn-wrap {
   display: flex;
   flex-direction: column;
@@ -279,6 +313,9 @@ select, #menu button {
   #onscreen-controls button {
     min-height: 64px;
     height: 64px;
+  }
+  #btnDown {
+    min-height: 48px;
   }
   #legend {
     font-size: 11px;
