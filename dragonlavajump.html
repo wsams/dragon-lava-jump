@@ -18,6 +18,7 @@
     <button id="newLevelBtn" type="button" title="New random level">New</button>
     <button id="shareBtn" type="button" aria-label="Share" title="Copy level link to clipboard">⤴</button>
     <button id="leaderboardBtn" type="button" title="View leaderboard for selected level">Leaderboard</button>
+    <button id="instructionsBtn" type="button" title="How to play">Instructions</button>
     <button id="muteSfxBtn" type="button" aria-label="Toggle SFX" title="Mute / unmute sound effects"></button>
     <button id="muteMusicBtn" type="button" aria-label="Toggle music" title="Mute / unmute music"></button>
     <div id="userForm">
@@ -54,6 +55,16 @@
           <p id="leaderboardEmpty" class="leaderboard-empty" style="display: none;">No completed runs yet. Win the level to appear here.</p>
         </div>
       </div>
+      <div id="instructionsOverlay" style="display: none;">
+        <div class="instructions-panel">
+          <button type="button" id="instructionsCloseBtn" class="win-close" aria-label="Close">×</button>
+          <h2 class="instructions-title">How to play</h2>
+          <div class="instructions-content">
+            <p><b>Controls:</b> ← → Move &nbsp;|&nbsp; ↓ = Slam down (in air) &nbsp;|&nbsp; Space = Jump (double jump in air) &nbsp;|&nbsp; F = Boost (once per jump, in air) &nbsp;|&nbsp; G = Fire breath &nbsp;• &nbsp; Or use the onscreen controls.</p>
+            <p><b>Goal:</b> Reach the golden pillar. Collect all 30 dots. Avoid lava (death). <b>Cave:</b> Don't touch slimes, bats, crawlers, or stalactites (reset). <b>Desert:</b> Don't touch cacti, scorpions, buzzards, or flying needles (reset). Touch poles to set checkpoints; collect the orange orb for a short lava bounce; touch the fire totem for flame (G) until you're hit. Some platforms (Cave) drop after you stand on them.</p>
+          </div>
+        </div>
+      </div>
     </div>
     <div id="onscreen-controls">
       <div class="move-group">
@@ -73,19 +84,11 @@
     </div>
   </div>
 
-  <div id="legend">
-    <b>Controls:</b> ← → Move &nbsp;|&nbsp; ↓ = Slam down (in air) &nbsp;|&nbsp; Space = Jump (double jump in air) &nbsp;|&nbsp; F = Boost (once per jump, in air) &nbsp;|&nbsp; G = Fire breath &nbsp;• &nbsp; Or use the onscreen controls.
-    <br>
-    <b>Goal:</b> Reach the golden pillar. Collect all 30 dots. Avoid lava (death). <b>Cave:</b> Don't touch slimes, bats, crawlers, or stalactites (reset). <b>Desert:</b> Don't touch cacti, scorpions, buzzards, or flying needles (reset). Touch poles to set checkpoints; collect the orange orb for a short lava bounce; touch the fire totem for flame (G) until you're hit. Some platforms (Cave) drop after you stand on them.
-    <br>
-    <small>
-      Powered by
-      <a href="https://github.com/wsams/dragon-lava-jump" target="_blank" rel="noopener noreferrer">github.com/wsams/dragon-lava-jump</a>
-      &nbsp;•&nbsp;
-      Built with
-      <a href="https://phaser.io/" target="_blank" rel="noopener noreferrer">Phaser</a>
-    </small>
-  </div>
+  <footer id="page-footer">
+    Powered by <a href="https://github.com/wsams/dragon-lava-jump" target="_blank" rel="noopener noreferrer">github.com/wsams/dragon-lava-jump</a>
+    &nbsp;•&nbsp;
+    Built with <a href="https://phaser.io/" target="_blank" rel="noopener noreferrer">Phaser</a>
+  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
   <script src="dragonlavajump-js/game-phaser.js"></script>

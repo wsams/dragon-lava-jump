@@ -3579,6 +3579,21 @@
       });
     }
 
+    var instructionsBtn = document.getElementById("instructionsBtn");
+    if (instructionsBtn) {
+      instructionsBtn.addEventListener("click", function () {
+        var overlay = document.getElementById("instructionsOverlay");
+        if (overlay) overlay.style.display = "flex";
+      });
+    }
+    var instructionsCloseBtn = document.getElementById("instructionsCloseBtn");
+    if (instructionsCloseBtn) {
+      instructionsCloseBtn.addEventListener("click", function () {
+        var overlay = document.getElementById("instructionsOverlay");
+        if (overlay) overlay.style.display = "none";
+      });
+    }
+
     document.getElementById("winNextLevelBtn").addEventListener("click", function () {
       var data = loadAllLevels(WORLD_H);
       if (!data.levels.length) return;
