@@ -8,6 +8,7 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 - **Movement:** Run left/right, jump (including double jump in mid-air), slam down (hold Down/S in the air to drop fast), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
 - **Hazards:** Lava (instant death unless you have a lava bounce), slimes, bats, crawlers, and stalactites. Checkpoints and extra lives help you progress.
 - **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem).
+- **Instructions:** The menu **Instructions** button opens a dialog with “How to play”—keyboard and on-screen controls, goal, and biome-specific hazards. The page footer shows only the repo and Phaser acknowledgements.
 
 ## How to run
 
@@ -20,7 +21,7 @@ Open `dragonlavajump.html` in a browser, or serve the project folder with any st
 - **Space:** Jump (double jump allowed once per air time)  
 - **F:** Air boost (forward dash in the air, once per jump)  
 - **G:** Fire breath (when you have the fire totem)  
-- On-screen buttons are available for touch devices (including a Down button below Left/Right for slam down).
+- **On-screen buttons (touch):** Left, Right, Down (slam), Breath (flame icon), Jump (up arrow), and Boost (left–right arrows). Buttons use **icons only** (no text labels) so holding a button doesn’t trigger OS text selection. Full controls and goal text are in the **Instructions** dialog (menu button).
 
 ## Credits
 
