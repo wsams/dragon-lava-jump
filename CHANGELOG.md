@@ -6,6 +6,10 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fire breath in Desert:** Flame breath (G) and touching scorpions/buzzards with the fire totem now kill scorpions and buzzards in the desert biome, same as slimes/crawlers in the cave. Added `killScorpion` and `killBuzzard`, breath-zone checks for desert creatures, and overlap handlers that consume the totem to survive contact.
+
 ### Added
 
 - **Slam down:** Hold Down (↓) or S while in the air to drop straight down at a fixed fast speed (Tetris-style). Not instant—uses `SLAM_DOWN_VY` for a quick animation. Use to avoid hazards. Keyboard: ArrowDown, KeyS. Onscreen: horizontal Down button between Left and Right (75% height). Documented in `.cursorrules` Player Mechanics.

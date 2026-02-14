@@ -2001,10 +2001,28 @@
   };
 
   GameScene.prototype.onOverlapScorpion = function (player, scorp) {
+    if (scorp.getData("dead")) return;
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killScorpion(scorp);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
     this.applyDeath();
   };
 
   GameScene.prototype.onOverlapBuzzard = function (player, buzz) {
+    if (buzz.getData("dead")) return;
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killBuzzard(buzz);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
     this.applyDeath();
   };
 
@@ -2073,6 +2091,46 @@
     var targets = parts
       ? [bat, parts.leftWing, parts.rightWing, parts.eyeL, parts.eyeR]
       : [bat];
+    this.tweens.add({
+      targets: targets,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        targets.forEach(function (t) { t.setVisible(false); });
+      }
+    });
+  };
+
+  GameScene.prototype.killScorpion = function (scorp) {
+    if (scorp.getData("dead")) return;
+    scorp.setData("dead", true);
+    if (scorp.body) scorp.body.checkCollision.none = true;
+    this.tweens.add({
+      targets: scorp,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        scorp.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killBuzzard = function (buzz) {
+    if (buzz.getData("dead")) return;
+    buzz.setData("dead", true);
+    if (buzz.body) buzz.body.checkCollision.none = true;
+    var parts = null;
+    for (var i = 0; i < this.buzzardParts.length; i++) {
+      if (this.buzzardParts[i].body === buzz) {
+        parts = this.buzzardParts[i];
+        break;
+      }
+    }
+    var targets = parts ? [buzz, parts.wingL, parts.wingR] : [buzz];
     this.tweens.add({
       targets: targets,
       scaleX: 0,
@@ -2585,6 +2643,25 @@
           this.killBat(bat);
         }
       }
+      // Desert: scorpions and buzzards can be burned by flame
+      if (this.biomeId === "desert") {
+        for (var sci = 0; sci < this.scorpions.length; sci++) {
+          var scorp = this.scorpions[sci];
+          if (scorp.getData("dead")) continue;
+          if (breathX - breathW / 2 < scorp.x + SCORPION_W / 2 && breathX + breathW / 2 > scorp.x - SCORPION_W / 2 &&
+              breathY < scorp.y + SCORPION_H / 2 && breathY + breathH > scorp.y - SCORPION_H / 2) {
+            this.killScorpion(scorp);
+          }
+        }
+        for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+          var buzz = this.buzzards[bzi];
+          if (buzz.getData("dead")) continue;
+          if (breathX - breathW / 2 < buzz.x + BUZZARD_W / 2 && breathX + breathW / 2 > buzz.x - BUZZARD_W / 2 &&
+              breathY < buzz.y + BUZZARD_H / 2 && breathY + breathH > buzz.y - BUZZARD_H / 2) {
+            this.killBuzzard(buzz);
+          }
+        }
+      }
       this.breathActiveTime -= dt;
     } else {
       this.breathSprite.setVisible(false);
@@ -2731,6 +2808,7 @@
       // Scorpions: patrol back and forth
       for (var sci = 0; sci < this.scorpions.length; sci++) {
         var scorp = this.scorpions[sci];
+        if (scorp.getData("dead")) continue;
         var left = scorp.getData("left");
         var right = scorp.getData("right");
         var dir = scorp.getData("direction");
@@ -2744,6 +2822,7 @@
       var buzzYMin = 80 + BUZZARD_H / 2, buzzYMax = this.WORLD_H - 80 - BUZZARD_H / 2;
       for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
         var buzz = this.buzzards[bzi];
+        if (buzz.getData("dead")) continue;
         var rng = buzz.getData("rng");
         var vx = buzz.getData("vx") || 0;
         var vy = buzz.getData("vy") || 0;
@@ -2763,6 +2842,7 @@
       }
       for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
         var bzInfo = this.buzzardParts[bpi];
+        if (bzInfo.body.getData("dead")) continue;
         bzInfo.wingL.x = bzInfo.body.x - 8;
         bzInfo.wingL.y = bzInfo.body.y + 2;
         bzInfo.wingR.x = bzInfo.body.x + 8;
