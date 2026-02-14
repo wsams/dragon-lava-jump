@@ -41,6 +41,8 @@ All notable changes to Dragon Lava Jump are documented here.
 - Platform, lava, and goal colors are chosen per biome in the scene (and in `resetPlayer` for platform color).
 - `buildLevelDataFromStored` and `saveCompletedLevel` include `biomeId` and desert-specific defs (`cactusDefs`, `scorpionDefs`, `buzzardDefs`) where applicable.
 - Built-in level pack levels explicitly use `biomeId: "default"`.
+- **Default (Cave) layout** now uses `runBiomeGenerators(DefaultBiome, options)` so ceiling/stalactites, slimes, bats, and crawlers come from the same generator registry as desert. Adding a creature to another biome (e.g. scorpion in Cave) is done by adding it to that biome’s `creatures` list.
+- **.cursorrules** Biomes section: entity lists (`creatures`, `obstacles`, `powerUps`) and hot-swap behavior documented.
 
 ### Audio (Desert fallback and console warnings)
 
@@ -58,3 +60,7 @@ All notable changes to Dragon Lava Jump are documented here.
 ### Fixed
 
 - **Desert dots and cacti:** Dots are no longer placed touching cacti. `generateDots` accepts an optional `cactusDefs`; when provided, a clear band (`CACTUS_AVOID_BAND`) around each cactus is excluded so dots stay collectible. `.cursorrules` Desert biome section updated with "Dots and cacti" rule.
+- **Checkpoints and dots away from obstacles:** Checkpoints are no longer placed on platforms that have a slime, cactus, or stalactite above them. Dots already avoided slimes and cacti; they now also avoid the X-band under stalactites (`STALACTITE_AVOID_BAND`). `generateCheckpoints` accepts optional `obstacleOpts: { stalactiteDefs, cactusDefs }`; `generateDots` accepts optional `stalactiteDefs`.
+- **Lava orb and fire totem above platforms:** Power-up items are now placed above a chosen platform (lava orb in the middle third of the level, fire totem in the first half) so they are always reachable. When `platforms` is passed to `generateLavaBounceItem(seed, H, platforms)` and `generateFireTotemItem(seed, H, platforms)`, position is `(platform.x + platform.w/2 + wiggle, platform.y - height)`; fallback when no platforms is unchanged.
+- **Double jump once per flight:** Double jump is now gated by a single flag `doubleJumpUsedThisFlight` (scene state). It is set to `true` when the player performs a double jump and set to `false` only when landing on a real platform (`physicsGround && standingPlatformIndex >= 0`), on lava bounce, or on respawn. No refill logic or jump count is used for the double-jump gate, so multiple double jumps in one flight are impossible.
+- **Jump from platform edge:** Ground detection for jumping uses a lenient platform check: `GROUND_EDGE_TOLERANCE` (12 px) and `GROUND_TOP_TOLERANCE` (10 px) so standing on the very tip of a platform counts as on ground, giving a normal jump plus one double jump instead of the first jump counting as the double jump.

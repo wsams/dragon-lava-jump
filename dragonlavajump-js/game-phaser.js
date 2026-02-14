@@ -18,6 +18,7 @@
   var DOT_SAFETY_MARGIN = 15;
   var SLIME_AVOID_BAND = 0.28;
   var CACTUS_AVOID_BAND = 0.2;  // dots must not touch cacti (platform-ratio band each side of cactus center)
+  var STALACTITE_AVOID_BAND = 28;  // pixels: no checkpoint/dot directly under a stalactite
   var POLE_W = 12;
   var POLE_H = 40;
   var LIVES_START = 3;
@@ -36,6 +37,8 @@
   var DOUBLE_JUMP_PLAT_H = 8;
   var DOUBLE_JUMP_PLAT_FADE_DURATION = 150;
   var DOUBLE_JUMP_PLAT_VISIBLE_MS = 220;
+  var GROUND_EDGE_TOLERANCE = 12;   // pixels past platform edge still count as "on platform" for jump
+  var GROUND_TOP_TOLERANCE = 10;    // feet within this many px above platform top = on ground
   var BREATH_LEN = 50;
   var BOOST_AIR_DELAY_SEC = 6 / REFERENCE_FPS;
   // Boost = straight forward only, strong horizontal push (no vertical)
@@ -141,25 +144,35 @@
     }
     return defs;
   }
-  function generateLavaBounceItem(seed, H) {
+  function generateLavaBounceItem(seed, H, platforms) {
     var rng = makeRng(seed);
-    return [{
-      type: "lavaBounce",
-      x: LEVEL_LENGTH / 2 + rngRange(rng, -80, 80),
-      y: H - 220 + rngRange(rng, -30, 30),
-      w: 28,
-      h: 28
-    }];
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.35 + rng() * 0.35));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -40, 40);
+      y = (p.y || 0) - 36 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH / 2 + rngRange(rng, -80, 80);
+      y = H - 220 + rngRange(rng, -30, 30);
+    }
+    return [{ type: "lavaBounce", x: x, y: y, w: 28, h: 28 }];
   }
-  function generateFireTotemItem(seed, H) {
+  function generateFireTotemItem(seed, H, platforms) {
     var rng = makeRng(seed);
-    return [{
-      type: "fireTotem",
-      x: LEVEL_LENGTH / 4 + rngRange(rng, -60, 60),
-      y: H - 200 + rngRange(rng, -40, 20),
-      w: 24,
-      h: 36
-    }];
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.15 + rng() * 0.35));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -30, 30);
+      y = (p.y || 0) - 40 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH / 4 + rngRange(rng, -60, 60);
+      y = H - 200 + rngRange(rng, -40, 20);
+    }
+    return [{ type: "fireTotem", x: x, y: y, w: 24, h: 36 }];
   }
   function pickSlimeCountForDifficulty(difficulty) {
     if (difficulty <= 3) return 1;
@@ -189,11 +202,31 @@
     }
     return defs;
   }
-  function generateCheckpoints(platforms, slimeDefs, seed) {
+  function generateCheckpoints(platforms, slimeDefs, seed, obstacleOpts) {
+    obstacleOpts = obstacleOpts || {};
     var slimePlatformIndices = new Set((slimeDefs || []).map(function (s) { return s.platformIndex; }));
+    var cactusPlatformIndices = new Set();
+    (obstacleOpts.cactusDefs || []).forEach(function (c) { cactusPlatformIndices.add(c.platformIndex); });
+    var stalactiteDefs = obstacleOpts.stalactiteDefs || [];
+    var excludedByStalactite = new Set();
+    for (var si = 0; si < platforms.length; si++) {
+      var p = platforms[si];
+      if (!p) continue;
+      for (var st = 0; st < stalactiteDefs.length; st++) {
+        var sx = stalactiteDefs[st].x;
+        if (sx >= p.x - STALACTITE_AVOID_BAND && sx <= p.x + (p.w || 0) + STALACTITE_AVOID_BAND)
+          excludedByStalactite.add(si);
+      }
+    }
     var candidates = platforms
       .map(function (p, i) { return { p: p, i: i }; })
-      .filter(function (x) { return x.i > 0 && !slimePlatformIndices.has(x.i); });
+      .filter(function (x) {
+        if (x.i <= 0) return false;
+        if (slimePlatformIndices.has(x.i)) return false;
+        if (cactusPlatformIndices.has(x.i)) return false;
+        if (excludedByStalactite.has(x.i)) return false;
+        return true;
+      });
     if (candidates.length < 2) {
       candidates = platforms.map(function (p, i) { return { p: p, i: i }; }).filter(function (x) { return x.i > 0; });
     }
@@ -233,7 +266,7 @@
     }
     return defs;
   }
-  function generateDots(platforms, seed, goal, slimeDefs, crawlerDefs, cactusDefs) {
+  function generateDots(platforms, seed, goal, slimeDefs, crawlerDefs, cactusDefs, stalactiteDefs) {
     var dots = [];
     var maxX = (goal && typeof goal.x === "number") ? goal.x - DOT_SAFETY_MARGIN : LEVEL_LENGTH - 50;
     var crawlerPlatforms = new Set((crawlerDefs || []).map(function (c) { return c.platformIndex; }));
@@ -248,6 +281,7 @@
       function (x) { return x.p && x.p.w > 12 && x.p.x < maxX && !crawlerPlatforms.has(x.i); }
     );
     var segments = [];
+    var stDefs = stalactiteDefs || [];
     for (var si = 0; si < safePlatforms.length; si++) {
       var sp = safePlatforms[si];
       var p = sp.p;
@@ -271,6 +305,15 @@
           Math.min(right, p.x + p.w * (c.offset + CACTUS_AVOID_BAND))
         ]);
       });
+      for (var st = 0; st < stDefs.length; st++) {
+        var sx = stDefs[st].x;
+        if (sx >= p.x && sx <= p.x + (p.w || 0)) {
+          avoidRanges.push([
+            Math.max(left, sx - STALACTITE_AVOID_BAND),
+            Math.min(right, sx + STALACTITE_AVOID_BAND)
+          ]);
+        }
+      }
       if (avoidRanges.length === 0) {
         segments.push({ left: left, right: right, y: y });
       } else {
@@ -471,22 +514,22 @@
     var goalY = last ? (last.y - 20) : (worldHeight - 120);
     goalY = Math.max(MAX_UP_Y + 40, Math.min(worldHeight - 120, goalY));
     var goal = { x: goalX, y: goalY, w: 50, h: 80 };
-    var cave = generateCeilingAndStalactites(difficulty, seed + 321, platforms, worldHeight, worldMinY);
-    var bats = generateBats(difficulty, seed + 777, worldHeight);
-    var items = generateLavaBounceItem(seed + 888, worldHeight).concat(generateFireTotemItem(seed + 999, worldHeight));
-    var slimes = generateSlimesForPlatforms(platforms, difficulty, seed + 999);
-    var checkpoints = generateCheckpoints(platforms, slimes, seed + 111);
-    var crawlers = generateCrawlers(platforms, slimes, difficulty, seed + 555);
-    var dots = generateDots(platforms, seed + 444, goal, slimes, crawlers);
+    var options = { platforms: platforms, difficulty: dClamped, seed: seed, H: worldHeight, worldMinY: worldMinY, layout: {} };
+    var genLayout = runBiomeGenerators(DefaultBiome, options);
+    var slimes = genLayout.slimes || [];
+    var crawlers = genLayout.crawlers || [];
+    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms).concat(generateFireTotemItem(seed + 999, worldHeight, platforms));
+    var checkpoints = generateCheckpoints(platforms, slimes, seed + 111, { stalactiteDefs: genLayout.stalactites || [], cactusDefs: [] });
+    var dots = generateDots(platforms, seed + 444, goal, slimes, crawlers, undefined, genLayout.stalactites || []);
     return {
       platforms: platforms,
       goal: goal,
       worldHeight: worldHeight,
       worldMinY: worldMinY,
       worldMaxY: worldMaxY,
-      ceilingPoints: cave.ceilingPoints,
-      stalactites: cave.stalactites,
-      bats: bats,
+      ceilingPoints: genLayout.ceilingPoints || [],
+      stalactites: genLayout.stalactites || [],
+      bats: genLayout.bats || [],
       items: items,
       dots: dots,
       slimes: slimes,
@@ -521,11 +564,14 @@
     } catch (e) {}
   }
 
-  // Default (cave) biome: uses existing generateDefaultLevelLayout
+  // Entity lists: biomes declare which creatures/obstacles/powerUps they use; same implementation can be hot-swapped
   var DefaultBiome = {
     id: "default",
     name: "Cave",
     assetBasePath: "assets/audio",
+    creatures: ["slime", "bat", "crawler"],
+    obstacles: ["stalactite"],
+    powerUps: ["lavaBounce", "fireTotem"],
     generateLevel: function (difficulty, seed, H) {
       return generateDefaultLevelLayout(difficulty, seed, H);
     }
@@ -549,6 +595,10 @@
   var BUZZARD_MAX_SPEED = 2.0 * REFERENCE_FPS;
   var BUZZARD_WANDER_STRENGTH = 0.45 * REFERENCE_FPS;
 
+  var DESERT_MAX_JUMP_GAP = 220;
+  var DESERT_CANYON_EXTRA_MIN = 35;
+  var DESERT_CANYON_EXTRA_MAX = 95;
+
   function generateDesertLevelLayout(difficulty, seed, H) {
     var rng = makeRng(seed);
     var platforms = [];
@@ -556,23 +606,28 @@
     platforms.push(start);
     var dClamped = Math.max(1, Math.min(30, difficulty));
     var t = (dClamped - 1) / 29;
-    // Mostly flat, long platforms; some double or triple length
-    var baseGap = 100 + difficulty * 3;
-    var baseW = 160 + difficulty * 4;
-    var cx = start.x + start.w + 60;
+    // Canyons: base gap scales with difficulty; extra "canyon" gaps make pits you can fall into
+    var baseGap = 85 + difficulty * 4;
+    var baseW = 140 + difficulty * 5;
+    var canyonChance = 0.08 + t * 0.22;
+    var cx = start.x + start.w + 50;
     var cy = DESERT_PLATFORM_BASE_Y;
     var worldHeight = H || WORLD_H;
-    var platCount = 18 + Math.floor(difficulty * 0.5);
+    var platCount = 16 + Math.floor(difficulty * 0.6);
     for (var i = 0; i < platCount; i++) {
-      var gap = baseGap * rngRange(rng, 0.85, 1.15);
+      var gap = baseGap * rngRange(rng, 0.9, 1.2);
+      if (rng() < canyonChance) {
+        var extra = rngRange(rng, DESERT_CANYON_EXTRA_MIN + t * 40, DESERT_CANYON_EXTRA_MAX + t * 50);
+        gap = Math.min(gap + extra, DESERT_MAX_JUMP_GAP);
+      }
       cx += gap;
       if (cx > LEVEL_LENGTH - 200) break;
-      var wiggle = rngRange(rng, -12, 12);
+      var wiggle = rngRange(rng, -14, 14);
       var y = cy + wiggle;
-      var useLong = rng() < 0.35 + t * 0.2;
-      var w = useLong ? baseW * rngRange(rng, 1.8, 2.8) : baseW * rngRange(rng, 0.9, 1.3);
+      var useLong = rng() < 0.3 + t * 0.25;
+      var w = useLong ? baseW * rngRange(rng, 1.6, 2.6) : baseW * rngRange(rng, 0.85, 1.25);
       w = Math.min(w, LEVEL_LENGTH - cx - 80);
-      if (w < 60) continue;
+      if (w < 50) continue;
       platforms.push({ x: cx, y: y, w: w, h: 16 });
       cy = cy * 0.7 + y * 0.3;
     }
@@ -584,56 +639,13 @@
     var worldMinY = Math.min(0, DESERT_PLATFORM_BASE_Y - 150);
     var worldMaxY = worldHeight;
 
-    // Cacti on platforms (3 varieties: 0 = saguaro, 1 = barrel, 2 = needle-shooter)
-    var cactusDefs = [];
-    var cactusSeed = seed + 2000;
-    var cactiRng = makeRng(cactusSeed);
-    for (var pi = 1; pi < platforms.length - 1; pi++) {
-      var plat = platforms[pi];
-      if (!plat || plat.w < 50) continue;
-      var numCacti = cactiRng() < 0.5 ? 0 : (cactiRng() < 0.7 ? 1 : 2);
-      for (var nc = 0; nc < numCacti; nc++) {
-        var offset = 0.15 + cactiRng() * 0.7;
-        var variety = Math.floor(cactiRng() * 3);
-        cactusDefs.push({ platformIndex: pi, offset: offset, variety: variety });
-      }
-    }
+    var options = { platforms: platforms, difficulty: dClamped, seed: seed, H: worldHeight, worldMinY: worldMinY, layout: {} };
+    var genLayout = runBiomeGenerators(DesertBiome, options);
+    var cactusDefs = genLayout.cactusDefs || [];
 
-    // Scorpions: patrol along ground (platform bottom edges); store platformIndex and left/right x bounds
-    var scorpionDefs = [];
-    var scorpRng = makeRng(seed + 3000);
-    var scorpCount = 2 + Math.floor(dClamped / 6);
-    for (var si = 0; si < scorpCount; si++) {
-      var platIdx = 1 + Math.floor(scorpRng() * (platforms.length - 2));
-      var sp = platforms[platIdx];
-      if (!sp) continue;
-      var left = sp.x + SCORPION_PATROL_MARGIN;
-      var right = sp.x + sp.w - SCORPION_PATROL_MARGIN;
-      if (right - left < 40) continue;
-      scorpionDefs.push({
-        platformIndex: platIdx,
-        startX: left + scorpRng() * (right - left - 40),
-        left: left,
-        right: right,
-        direction: scorpRng() < 0.5 ? 1 : -1
-      });
-    }
-
-    // Buzzards in sky (like bats)
-    var buzzardDefs = [];
-    var buzzRng = makeRng(seed + 4000);
-    var buzzCount = 1 + Math.floor(dClamped / 10);
-    for (var bi = 0; bi < buzzCount; bi++) {
-      buzzardDefs.push({
-        x: rngRange(buzzRng, 200, LEVEL_LENGTH - 200),
-        y: rngRange(buzzRng, 60, worldHeight - 180),
-        rngSeed: seed + 5000 + bi
-      });
-    }
-
-    var items = generateLavaBounceItem(seed + 888, worldHeight).concat(generateFireTotemItem(seed + 999, worldHeight));
-    var checkpoints = generateCheckpoints(platforms, [], seed + 111);
-    var dots = generateDots(platforms, seed + 444, goal, [], [], cactusDefs);
+    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms).concat(generateFireTotemItem(seed + 999, worldHeight, platforms));
+    var checkpoints = generateCheckpoints(platforms, [], seed + 111, { stalactiteDefs: [], cactusDefs: cactusDefs });
+    var dots = generateDots(platforms, seed + 444, goal, [], [], cactusDefs, []);
 
     return {
       platforms: platforms,
@@ -647,8 +659,8 @@
       slimes: [],
       crawlers: [],
       cactusDefs: cactusDefs,
-      scorpionDefs: scorpionDefs,
-      buzzardDefs: buzzardDefs,
+      scorpionDefs: genLayout.scorpionDefs || [],
+      buzzardDefs: genLayout.buzzardDefs || [],
       items: items,
       dots: dots,
       checkpoints: checkpoints
@@ -659,12 +671,106 @@
     id: "desert",
     name: "Desert",
     assetBasePath: "assets/biomes/desert/audio",
+    creatures: ["scorpion", "buzzard"],
+    obstacles: ["cactus"],
+    powerUps: ["lavaBounce", "fireTotem"],
     generateLevel: function (difficulty, seed, H) {
       return generateDesertLevelLayout(difficulty, seed, H);
     }
   };
 
   var BIOMES = { default: DefaultBiome, desert: DesertBiome };
+
+  // Creature/obstacle generators: (options) -> defs; options = { platforms, difficulty, seed, H, layout }
+  function generateScorpionDefs(platforms, difficulty, seed) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var scorpRng = makeRng(seed);
+    var scorpCount = 2 + Math.floor(dClamped / 6);
+    var defs = [];
+    for (var si = 0; si < scorpCount; si++) {
+      var platIdx = 1 + Math.floor(scorpRng() * (platforms.length - 2));
+      var sp = platforms[platIdx];
+      if (!sp) continue;
+      var left = sp.x + SCORPION_PATROL_MARGIN;
+      var right = sp.x + sp.w - SCORPION_PATROL_MARGIN;
+      if (right - left < 40) continue;
+      defs.push({
+        platformIndex: platIdx,
+        startX: left + scorpRng() * (right - left - 40),
+        left: left,
+        right: right,
+        direction: scorpRng() < 0.5 ? 1 : -1
+      });
+    }
+    return defs;
+  }
+  function generateBuzzardDefs(difficulty, seed, H) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var buzzRng = makeRng(seed);
+    var buzzCount = 1 + Math.floor(dClamped / 10);
+    var worldHeight = H || WORLD_H;
+    var defs = [];
+    for (var bi = 0; bi < buzzCount; bi++) {
+      defs.push({
+        x: rngRange(buzzRng, 200, LEVEL_LENGTH - 200),
+        y: rngRange(buzzRng, 60, worldHeight - 180),
+        rngSeed: seed + 1000 + bi
+      });
+    }
+    return defs;
+  }
+  function generateCactusDefs(platforms, seed) {
+    var cactiRng = makeRng(seed);
+    var defs = [];
+    for (var pi = 1; pi < platforms.length - 1; pi++) {
+      var plat = platforms[pi];
+      if (!plat || plat.w < 50) continue;
+      var numCacti = cactiRng() < 0.5 ? 0 : (cactiRng() < 0.7 ? 1 : 2);
+      for (var nc = 0; nc < numCacti; nc++) {
+        var offset = 0.15 + cactiRng() * 0.7;
+        var variety = Math.floor(cactiRng() * 3);
+        defs.push({ platformIndex: pi, offset: offset, variety: variety });
+      }
+    }
+    return defs;
+  }
+
+  var CREATURE_GENERATORS = {
+    slime: function (op) { return generateSlimesForPlatforms(op.platforms, op.difficulty, (op.seed || 0) + 999); },
+    bat: function (op) { return generateBats(op.difficulty, (op.seed || 0) + 777, op.H); },
+    crawler: function (op) { return generateCrawlers(op.platforms, op.layout.slimes || [], op.difficulty, (op.seed || 0) + 555); },
+    scorpion: function (op) { return generateScorpionDefs(op.platforms, op.difficulty, (op.seed || 0) + 3000); },
+    buzzard: function (op) { return generateBuzzardDefs(op.difficulty, (op.seed || 0) + 4000, op.H); }
+  };
+  var OBSTACLE_GENERATORS = {
+    stalactite: function (op) {
+      var cave = generateCeilingAndStalactites(op.difficulty, (op.seed || 0) + 321, op.platforms, op.H, op.worldMinY);
+      return { ceilingPoints: cave.ceilingPoints, stalactites: cave.stalactites };
+    },
+    cactus: function (op) { return { cactusDefs: generateCactusDefs(op.platforms, (op.seed || 0) + 2000) }; }
+  };
+  var CREATURE_LAYOUT_KEY = { slime: "slimes", bat: "bats", crawler: "crawlers", scorpion: "scorpionDefs", buzzard: "buzzardDefs" };
+
+  function runBiomeGenerators(biome, options) {
+    var layout = options.layout || {};
+    options.layout = layout;
+    var o;
+    for (o = 0; o < biome.obstacles.length; o++) {
+      var obstType = biome.obstacles[o];
+      if (OBSTACLE_GENERATORS[obstType]) {
+        var r = OBSTACLE_GENERATORS[obstType](options);
+        for (var key in r) layout[key] = r[key];
+      }
+    }
+    for (o = 0; o < biome.creatures.length; o++) {
+      var creatType = biome.creatures[o];
+      if (CREATURE_GENERATORS[creatType]) {
+        var layoutKey = CREATURE_LAYOUT_KEY[creatType] || creatType + "Defs";
+        layout[layoutKey] = CREATURE_GENERATORS[creatType](options);
+      }
+    }
+    return layout;
+  }
 
   // --- Storage
   var LEVELS_STORAGE_KEY = "dragonLevels";
@@ -872,19 +978,19 @@
         }
         if (!Array.isArray(lvl.items)) lvl.items = [];
         if (!lvl.items.some(function (i) { return i && i.type === "lavaBounce"; })) {
-          lvl.items = lvl.items.concat(generateLavaBounceItem(meta.seed + 888, lvlH));
+          lvl.items = lvl.items.concat(generateLavaBounceItem(meta.seed + 888, lvlH, lvl.platforms));
           changed = true;
         }
         if (!lvl.items.some(function (i) { return i && i.type === "fireTotem"; })) {
-          lvl.items = lvl.items.concat(generateFireTotemItem(meta.seed + 999, lvlH));
+          lvl.items = lvl.items.concat(generateFireTotemItem(meta.seed + 999, lvlH, lvl.platforms));
           changed = true;
         }
         if (!Array.isArray(lvl.dots) || lvl.dots.length !== NUM_DOTS) {
-          lvl.dots = generateDots(lvl.platforms || [], meta.seed + 444, lvl.goal, lvl.slimes, lvl.crawlers);
+          lvl.dots = generateDots(lvl.platforms || [], meta.seed + 444, lvl.goal, lvl.slimes || [], lvl.crawlers || [], lvl.cactusDefs || [], lvl.stalactites || []);
           changed = true;
         }
         if (!Array.isArray(lvl.checkpoints)) {
-          lvl.checkpoints = generateCheckpoints(lvl.platforms, lvl.slimes || [], meta.seed + 111);
+          lvl.checkpoints = generateCheckpoints(lvl.platforms, lvl.slimes || [], meta.seed + 111, { stalactiteDefs: lvl.stalactites || [], cactusDefs: lvl.cactusDefs || [] });
           changed = true;
         }
         if (!Array.isArray(lvl.crawlers) || lvl.crawlers.length === 0) {
@@ -942,7 +1048,7 @@
     }
     var dotDefs = levelState.dotDefs.length === NUM_DOTS
       ? levelState.dotDefs
-      : generateDots(platforms, (levelState.currentLevelSeed || 0) + 444, goal, levelState.slimeDefs || [], levelState.crawlerDefs || []);
+      : generateDots(platforms, (levelState.currentLevelSeed || 0) + 444, goal, levelState.slimeDefs || [], levelState.crawlerDefs || [], levelState.cactusDefs || [], levelState.stalactiteDefs || []);
     var biomeId = levelState.biomeId === "desert" ? "desert" : "default";
     var toPush = {
       id: levelID,
@@ -1055,13 +1161,14 @@
         : generateCrawlers(platforms, slimeDefs, level.difficulty != null ? level.difficulty : 15, (level.seed != null ? level.seed : 0) + 555);
       dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
         ? level.dots
-        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, slimeDefs, crawlerDefs);
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, slimeDefs, crawlerDefs, undefined, level.stalactites || []);
     } else {
       crawlerDefs = [];
       dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
         ? level.dots
-        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, [], [], level.cactusDefs || []);
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, [], [], level.cactusDefs || [], []);
     }
+    var obstacleOpts = { stalactiteDefs: level.stalactites || [], cactusDefs: level.cactusDefs || [] };
     return {
       currentLevelID: level.id,
       currentLevelSeed: level.seed != null ? level.seed : null,
@@ -1081,7 +1188,7 @@
       dotDefs: dotDefs,
       checkpointDefs: (Array.isArray(level.checkpoints) && level.checkpoints.length >= 2)
         ? level.checkpoints
-        : generateCheckpoints(platforms, slimeDefs, (level.seed != null ? level.seed : 0) + 111),
+        : generateCheckpoints(platforms, slimeDefs, (level.seed != null ? level.seed : 0) + 111, obstacleOpts),
       crawlerDefs: crawlerDefs,
       cactusDefs: Array.isArray(level.cactusDefs) ? level.cactusDefs : [],
       scorpionDefs: Array.isArray(level.scorpionDefs) ? level.scorpionDefs : [],
@@ -1221,6 +1328,7 @@
     this.dotsCollected = this.dotDefs.map(function () { return false; });
     this.dotsCollectedCount = 0;
     this.standingPlatformIndex = -1;
+    this.doubleJumpUsedThisFlight = false;  // only reset when landing on real platform; gates exactly one double jump per flight
     this.doubleJumpPlatform = null;
     this.wasOnDoubleJumpPlat = false;
     this.cameraX = 0;
@@ -1665,6 +1773,7 @@
       this.player.onGround = false;
       this.player.jumpsLeft = 1;
       this.player.boostAvailable = false;
+      this.doubleJumpUsedThisFlight = false;  // one double jump allowed after bounce
       if (this.lavaBounceTotalUses >= 3) {
         this.lavaBounceItemCollected = false;
         this.lavaBounceBounces = 0;
@@ -2033,6 +2142,7 @@
     this.player.boostAvailable = true;
     this.player.boostFramesLeft = 0;
     this.player.timeInAir = 0;
+    this.doubleJumpUsedThisFlight = false;
 
     // Reset default biome enemies
     if (this.biomeId === "default") {
@@ -2308,6 +2418,12 @@
     }
     if (this.timerStarted) this.currentTime = (time / 1000) - this.startTime;
 
+    var creatureSpeedMult = 1;
+    if (this.currentDifficulty != null && typeof this.currentDifficulty === "number") {
+      var diffT = (Math.max(1, Math.min(30, this.currentDifficulty)) - 1) / 29;
+      creatureSpeedMult = 1 + 0.6 * diffT;
+    }
+
     // Player movement - fixed hitbox: we only change velocity
     this.player.body.setVelocity(0, this.player.body.velocity.y);
     if (keys.left) {
@@ -2345,17 +2461,34 @@
     this.playerEye.x = this.player.x + fx * 8;
     this.playerEye.y = this.player.y - 5;
 
-    var onGround = this.player.body.blocked.down || this.player.body.touching.down;
+    // Lenient "on a real platform" check so jump from the very edge counts as ground jump
+    this.standingPlatformIndex = -1;
+    var playerLeft = this.player.x - DRAGON_W / 2;
+    var playerRight = this.player.x + DRAGON_W / 2;
+    var playerBottom = this.player.y + DRAGON_H / 2;
+    for (var pk = 0; pk < this.platformsData.length; pk++) {
+      var plat = this.platformsData[pk];
+      if (!plat || plat.dropping) continue;
+      var platLeft = plat.x - GROUND_EDGE_TOLERANCE;
+      var platRight = plat.x + (plat.w || 0) + GROUND_EDGE_TOLERANCE;
+      var platTop = plat.y;
+      var platBottom = plat.y + (plat.h || 16) + 2;
+      if (playerRight >= platLeft && playerLeft <= platRight &&
+          playerBottom >= platTop - GROUND_TOP_TOLERANCE && playerBottom <= platBottom) {
+        this.standingPlatformIndex = pk;
+        break;
+      }
+    }
+    var physicsGround = this.player.body.blocked.down || this.player.body.touching.down;
+    var onGround = physicsGround || this.standingPlatformIndex >= 0;
     if (onGround) {
       this.player.timeInAir = 0;
-      // Landing on a platform resets the per-run lava bounce counter,
-      // so you can get two fresh bounces next time you fall into lava.
+      // Landing on a real platform (physics contact) resets double jump for next flight
+      if (physicsGround && this.standingPlatformIndex >= 0) this.doubleJumpUsedThisFlight = false;
+      // Landing on a platform resets the per-run lava bounce counter
       this.lavaBounceBounces = 0;
     } else {
       this.player.timeInAir += dt;
-      // Safety clamp: once we're in the air, we should never
-      // have more than one extra jump available (double jump).
-      if (this.player.jumpsLeft > 1) this.player.jumpsLeft = 1;
     }
 
     if (keys.jump && onGround) {
@@ -2363,9 +2496,10 @@
       this.player.jumpsLeft = 1;
       window.__dragonJumpKeyReleased = false;
       this.playSfx(this.jumpSound, "jump");
-    } else if (keys.jump && !onGround && this.player.jumpsLeft > 0 && window.__dragonJumpKeyReleased) {
+    } else if (keys.jump && !onGround && !this.doubleJumpUsedThisFlight && window.__dragonJumpKeyReleased) {
       this.player.body.setVelocityY(-jumpStrength);
-      this.player.jumpsLeft--;
+      this.doubleJumpUsedThisFlight = true;
+      this.player.jumpsLeft = 0;
       window.__dragonJumpKeyReleased = false;
       this.playSfx(this.jumpSound, "jump");
       this.spawnDoubleJumpPlatform();
@@ -2467,7 +2601,7 @@
         slime.setData("timer", timer);
         if (timer <= 0) {
           slime.setData("state", "jumping");
-          slime.setData("vy", -SLIME_JUMP_STRENGTH);
+          slime.setData("vy", -SLIME_JUMP_STRENGTH * creatureSpeedMult);
           var pv = this.getProximityVolume(slime.x, slime.y);
           if (pv > 0.06) this.playSfx(this.slimeSound, "slimeJump", { volume: 0.5 * pv });
         }
@@ -2520,9 +2654,10 @@
         vy += (dy / dist) * BAT_WANDER_STRENGTH * attract * dt;
       }
       var speed = Math.sqrt(vx * vx + vy * vy);
-      if (speed > BAT_MAX_SPEED) {
-        vx = (vx / speed) * BAT_MAX_SPEED;
-        vy = (vy / speed) * BAT_MAX_SPEED;
+      var batMax = BAT_MAX_SPEED * creatureSpeedMult;
+      if (speed > batMax) {
+        vx = (vx / speed) * batMax;
+        vy = (vy / speed) * batMax;
       }
       bat.setData("vx", vx);
       bat.setData("vy", vy);
@@ -2558,7 +2693,7 @@
       var oldOffset = crawler.getData("offset");
       var wasTop = oldOffset >= 0 && oldOffset < 0.25;
       var wasBottom = oldOffset >= 0.5 && oldOffset < 0.75;
-      var offset = oldOffset + CRAWLER_PERIMETER_SPEED * dt;
+      var offset = oldOffset + CRAWLER_PERIMETER_SPEED * creatureSpeedMult * dt;
       if (offset >= 1) offset -= 1;
       crawler.setData("offset", offset);
       var pos = crawlerPerimeterPosition(cplat, offset);
@@ -2592,7 +2727,7 @@
         var left = scorp.getData("left");
         var right = scorp.getData("right");
         var dir = scorp.getData("direction");
-        scorp.x += dir * SCORPION_SPEED * dt;
+        scorp.x += dir * SCORPION_SPEED * creatureSpeedMult * dt;
         if (scorp.x <= left) { scorp.x = left; scorp.setData("direction", 1); }
         if (scorp.x >= right) { scorp.x = right; scorp.setData("direction", -1); }
         scorp.body.updateFromGameObject();
@@ -2608,9 +2743,10 @@
         vx += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
         vy += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
         var speed = Math.sqrt(vx * vx + vy * vy);
-        if (speed > BUZZARD_MAX_SPEED) {
-          vx = (vx / speed) * BUZZARD_MAX_SPEED;
-          vy = (vy / speed) * BUZZARD_MAX_SPEED;
+        var buzzMax = BUZZARD_MAX_SPEED * creatureSpeedMult;
+        if (speed > buzzMax) {
+          vx = (vx / speed) * buzzMax;
+          vy = (vy / speed) * buzzMax;
         }
         buzz.setData("vx", vx);
         buzz.setData("vy", vy);
@@ -2732,23 +2868,14 @@
       }
     }
 
-    // Track which platform we're standing on (for drop platforms)
-    this.standingPlatformIndex = -1;
-    if (onGround) {
-      for (var pk = 0; pk < this.platformsData.length; pk++) {
-        var plat = this.platformsData[pk];
-        if (this.player.x + DRAGON_W / 2 >= plat.x && this.player.x - DRAGON_W / 2 <= plat.x + plat.w &&
-            this.player.y + DRAGON_H / 2 >= plat.y - 2 && this.player.y + DRAGON_H / 2 <= plat.y + plat.h + 2) {
-          this.standingPlatformIndex = pk;
-          break;
-        }
-      }
-    }
+    // standingPlatformIndex already set above (lenient check for drop-platform logic)
 
     if (onGround) {
       this.player.onGround = true;
-      this.player.jumpsLeft = 2;
-      this.player.boostAvailable = true;
+      if (physicsGround && this.standingPlatformIndex >= 0) {
+        this.player.jumpsLeft = 2;   // next ground jump + one double jump available
+        this.player.boostAvailable = true;
+      }
     } else {
       this.player.onGround = false;
     }
