@@ -2031,11 +2031,19 @@
     var it = zone.getData("item");
     this.addScore(POINTS_POWERUP);
     if (it.type === "lavaBounce") {
-      // Lava orb: grants lava bounces (2 per run) until 3 total uses or hit by enemy.
+      // Lava orb: grants lava bounces. Picking it up replaces any fire totem (one power-up at a time).
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
       this.lavaBounceItemCollected = true;
       this.lavaBounceBounces = 0;
       this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
     } else if (it.type === "fireTotem") {
+      // Fire totem: one breath. Picking it up replaces any lava orb (one power-up at a time).
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
       this.fireTotemCollected = true;
       this.fireBreathsLeft = 1;
     }
@@ -2587,10 +2595,9 @@
       this.player.body.setVelocityX(moveSpeed);
       this.player.facing = 1;
     }
-    // Change player color for buffs:
-    // - lava orb: always blink while you have it (HUD shows bounces left)
-    // - fire totem: orange tint
-    // - both: orange + blink
+    // Change player color for buffs (only one power-up at a time):
+    // - lava orb: amber/gold blink (HUD shows bounces left)
+    // - fire totem: solid orange
     var dragonColor = 0x4a9b4a;
     var fireActive = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
     var orbActive = this.lavaBounceItemCollected;
@@ -2598,12 +2605,10 @@
     var tSec = time / 1000;
     var phase = (tSec / period) % 1;
     var bright = phase < 0.5;
-    if (fireActive && orbActive) {
-      dragonColor = bright ? 0xffe2b3 : 0xff8c32;
-    } else if (orbActive) {
+    if (orbActive) {
       dragonColor = bright ? 0xfff3c4 : 0xf97316;
     } else if (fireActive) {
-      dragonColor = 0xb85c20;
+      dragonColor = 0xe05c20;
     }
     this.player.fillColor = dragonColor;
     this.playerHead.fillColor = dragonColor;

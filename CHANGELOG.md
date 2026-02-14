@@ -6,6 +6,10 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Power-ups one at a time:** Picking up a power-up (lava orb or fire totem) now replaces the current one; you can only have one at a time. Lava orb gives the dragon an **amber/gold blink**; fire totem gives **solid orange**. Replaces previous "both at once" behavior.
+
 ### Fixed
 
 - **Fire breath in Desert:** Flame breath (G) and touching scorpions/buzzards with the fire totem now kill scorpions and buzzards in the desert biome, same as slimes/crawlers in the cave. Added `killScorpion` and `killBuzzard`, breath-zone checks for desert creatures, and overlap handlers that consume the totem to survive contact.
