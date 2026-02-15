@@ -2611,9 +2611,11 @@
         }
       }
     }
-    this.timerStarted = false;
-    this.startTime = 0;
-    this.currentTime = 0;
+    if (this.lastCheckpointIndex < 0) {
+      this.timerStarted = false;
+      this.startTime = 0;
+      this.currentTime = 0;
+    }
     this.gameWon = false;
     this.winSequenceState = "idle";
     this.winHoldTimer = 0;
