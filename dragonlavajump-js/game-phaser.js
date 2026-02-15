@@ -1416,9 +1416,10 @@
     this.fireBreathsLeft = 0;
     this.breathActiveTime = 0;
     this.chompCollected = false;
-    this.cheatsUsedThisRun = false;
-    this.cheatInvincible = false;
-    this.cheatInfiniteLives = false;
+    this.cheatInvincible = !!(window.__dragonCheatInvincible);
+    this.cheatInfiniteLives = !!(window.__dragonCheatInfiniteLives);
+    this.cheatsUsedThisRun = this.cheatInvincible || this.cheatInfiniteLives || !!(window.__dragonCheatsUsedThisRun);
+    if (this.cheatInfiniteLives) this.lives = LIVES_START;
     this.dotsCollected = this.dotDefs.map(function () { return false; });
     this.dotsCollectedCount = 0;
     this.score = 0;
@@ -1835,6 +1836,13 @@
 
     this.hudText = this.add.text(16, 14, "", { fontSize: "14px", color: "#fff", backgroundColor: "#00000088" }).setScrollFactor(0).setDepth(100);
     if (this.hudText.setPadding) this.hudText.setPadding(8, 4);
+
+    this.godModeBorder = this.add.graphics().setScrollFactor(0).setDepth(9999);
+    var gw = this.cameras.main.width;
+    var gh = this.cameras.main.height;
+    this.godModeBorder.lineStyle(6, 0xffd700, 0.9);
+    this.godModeBorder.strokeRect(3, 3, gw - 6, gh - 6);
+    this.godModeBorder.setVisible(false);
   };
 
   // Play SFX or log to console when file is missing (see .cursorrules for required files)
@@ -2359,7 +2367,15 @@
     code = (code || "").trim().toLowerCase();
     if (!code) return "Enter a code.";
     this.cheatsUsedThisRun = true;
+    window.__dragonCheatsUsedThisRun = true;
     if (code === "orb") {
+      if (this.lavaBounceItemCollected) {
+        this.lavaBounceItemCollected = false;
+        this.lavaBounceBounces = 0;
+        this.lavaBounceTotalUses = 0;
+        this.lavaBounceCooldownUntil = 0;
+        return "Lava orb removed.";
+      }
       this.fireTotemCollected = false;
       this.fireBreathsLeft = 0;
       this.chompCollected = false;
@@ -2370,6 +2386,11 @@
       return "Lava orb added.";
     }
     if (code === "flame") {
+      if (this.fireTotemCollected || this.fireBreathsLeft > 0) {
+        this.fireTotemCollected = false;
+        this.fireBreathsLeft = 0;
+        return "Fire totem removed.";
+      }
       this.lavaBounceItemCollected = false;
       this.lavaBounceBounces = 0;
       this.lavaBounceTotalUses = 0;
@@ -2381,6 +2402,10 @@
     }
     if (code === "chomp") {
       if (this.biomeId !== "desert") return "Chomp is Desert only.";
+      if (this.chompCollected) {
+        this.chompCollected = false;
+        return "Chomp removed.";
+      }
       this.lavaBounceItemCollected = false;
       this.lavaBounceBounces = 0;
       this.lavaBounceTotalUses = 0;
@@ -2391,13 +2416,15 @@
       return "Chomp added.";
     }
     if (code === "god") {
-      this.cheatInvincible = true;
-      return "Invincibility on.";
+      this.cheatInvincible = !this.cheatInvincible;
+      window.__dragonCheatInvincible = this.cheatInvincible;
+      return this.cheatInvincible ? "Invincibility on." : "Invincibility off.";
     }
     if (code === "lives") {
-      this.cheatInfiniteLives = true;
-      this.lives = LIVES_START;
-      return "Infinite lives on.";
+      this.cheatInfiniteLives = !this.cheatInfiniteLives;
+      window.__dragonCheatInfiniteLives = this.cheatInfiniteLives;
+      if (this.cheatInfiniteLives) this.lives = LIVES_START;
+      return this.cheatInfiniteLives ? "Infinite lives on." : "Infinite lives off.";
     }
     this.cheatsUsedThisRun = false;
     return "Unknown code.";
@@ -2690,6 +2717,8 @@
     this.sceneTime = (typeof time === "number") ? time : 0;
     var dt = delta / 1000;
     if (dt > 0.05) dt = 0.05;
+
+    if (this.godModeBorder) this.godModeBorder.setVisible(!!this.cheatInvincible);
 
     if (this.gameWon) {
       if (this.playerHead && this.playerHead.active) {
@@ -3424,6 +3453,13 @@
   }
 
   function startOrRestartGame() {
+    var sameLevelRestart = !!window.__dragonRestartingSameLevel;
+    window.__dragonRestartingSameLevel = false;
+    if (!sameLevelRestart) {
+      window.__dragonCheatInvincible = false;
+      window.__dragonCheatInfiniteLives = false;
+      window.__dragonCheatsUsedThisRun = false;
+    }
     if (window.__dragonGame && window.__dragonGame.scene && window.__dragonGame.scene.scenes) {
       var scene = window.__dragonGame.scene.getScene("Game");
       if (scene) scene.scene.restart();
@@ -3723,6 +3759,13 @@
       startOrRestartGame();
     });
 
+    document.getElementById("restartLevelBtn").addEventListener("click", function () {
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
+      window.__dragonRestartingSameLevel = true;
+      startOrRestartGame();
+    });
+
     document.getElementById("shareBtn").addEventListener("click", function () {
       var data = window.__dragonLevelData;
       var seed = data && data.currentLevelSeed;
@@ -3947,6 +3990,7 @@
         window.__dragonGame.scene.getScene("Game").lives = LIVES_START;
       }
       document.getElementById("winOverlay").style.display = "none";
+      window.__dragonRestartingSameLevel = true;
       startOrRestartGame();
     });
 

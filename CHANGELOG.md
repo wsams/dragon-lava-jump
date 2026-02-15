@@ -6,9 +6,14 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cheats persist on Restart:** God mode (invincibility) and infinite-lives cheats now stay on when you use the menu **Restart** button or the win overlay **Replay** button. Cheat state is stored in `window.__dragonCheat*` and restored when the Game scene restarts; starting a new level (New level, level select, next level, etc.) clears cheat flags so only same-level restart keeps them.
+
 ### Added
 
-- **Cheat system:** Press **`** or **~** to open the cheat code panel; on mobile a **Cheats** button appears in the menu to open the panel. Enter a code and press Enter. Codes: **orb** (lava orb), **flame** (fire totem), **chomp** (Desert only), **god** (invincibility), **lives** (infinite lives). Using any cheat disables score saving for that run (win overlay shows "Cheats used — score not saved"). See .cursorrules Cheats section.
+- **Restart button:** Menu **Restart** button restarts the current level from the beginning (same as win overlay Replay). Use when stuck (e.g. god mode in lava) or to start over without losing all lives.
+- **Cheat system:** Press **`** or **~** to open the cheat code panel; on mobile a **Cheats** button appears in the menu to open the panel. Running the same code again toggles the cheat off (scores still not saved). Enter a code and press Enter. Codes: **orb** (lava orb), **flame** (fire totem), **chomp** (Desert only), **god** (invincibility), **lives** (infinite lives). Using any cheat disables score saving for that run (win overlay shows "Cheats used — score not saved"). See .cursorrules Cheats section.
 
 - **Chomp power-up (Desert only):** New power-up in Desert levels. Picking it up gives long teeth and lets you chomp scorpions and buzzards when they touch you from the **front** (creature dies, you take no damage; plays `chomp.mp3`). If a creature touches you from **behind, top, or bottom**—or you touch a cactus—you lose chomp but survive (one “shield” touch; creature is not killed; plays `shield-loss.mp3`). Dragon blinks yellow and green and shows two long teeth. One power-up at a time (chomp replaces orb/totem and vice versa). Audio: `assets/audio/chomp.mp3` (optional override `assets/biomes/desert/audio/chomp.mp3`). HUD shows "Chomp" when active. Needles still kill. See .cursorrules Power-ups and Desert biome.
 
