@@ -175,6 +175,21 @@
     }
     return [{ type: "fireTotem", x: x, y: y, w: 24, h: 36 }];
   }
+  function generateChompItem(seed, H, platforms) {
+    var rng = makeRng(seed);
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.5 + rng() * 0.25));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -40, 40);
+      y = (p.y || 0) - 32 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH * 0.6 + rngRange(rng, -60, 60);
+      y = H - 220 + rngRange(rng, -30, 30);
+    }
+    return [{ type: "chomp", x: x, y: y, w: 28, h: 28 }];
+  }
   function pickSlimeCountForDifficulty(difficulty) {
     if (difficulty <= 3) return 1;
     if (difficulty <= 6) return 2;
@@ -644,7 +659,9 @@
     var genLayout = runBiomeGenerators(DesertBiome, options);
     var cactusDefs = genLayout.cactusDefs || [];
 
-    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms).concat(generateFireTotemItem(seed + 999, worldHeight, platforms));
+    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms)
+      .concat(generateFireTotemItem(seed + 999, worldHeight, platforms))
+      .concat(generateChompItem(seed + 777, worldHeight, platforms));
     var checkpoints = generateCheckpoints(platforms, [], seed + 111, { stalactiteDefs: [], cactusDefs: cactusDefs });
     var dots = generateDots(platforms, seed + 444, goal, [], [], cactusDefs, []);
 
@@ -674,7 +691,7 @@
     assetBasePath: "assets/biomes/desert/audio",
     creatures: ["scorpion", "buzzard"],
     obstacles: ["cactus"],
-    powerUps: ["lavaBounce", "fireTotem"],
+    powerUps: ["lavaBounce", "fireTotem", "chomp"],
     generateLevel: function (difficulty, seed, H) {
       return generateDesertLevelLayout(difficulty, seed, H);
     }
@@ -1307,6 +1324,7 @@
     this.load.audio("music", "assets/audio/music.mp3");
     this.load.audio("boost", "assets/audio/boost.mp3");
     this.load.audio("dot", "assets/audio/dot.mp3");
+    this.load.audio("chomp", "assets/audio/chomp.mp3");
     // Desert biome: optional overrides; same file names under assets/biomes/desert/audio/ (see .cursorrules)
     var desertBase = "assets/biomes/desert/audio/";
     this.load.audio("desert_jump", desertBase + "jump.mp3");
@@ -1321,6 +1339,7 @@
     this.load.audio("desert_boost", desertBase + "boost.mp3");
     this.load.audio("desert_dot", desertBase + "dot.mp3");
     this.load.audio("desert_checkpoint", desertBase + "checkpoint.mp3");
+    this.load.audio("desert_chomp", desertBase + "chomp.mp3");
     this.load.on("loaderror", function (file) {
       if (file && file.key && file.key.indexOf("desert_") === 0) {
         console.warn("[Dragon Lava Jump] Desert audio file missing (see .cursorrules for paths):", file.key);
@@ -1396,6 +1415,10 @@
     this.fireTotemCollected = false;
     this.fireBreathsLeft = 0;
     this.breathActiveTime = 0;
+    this.chompCollected = false;
+    this.cheatsUsedThisRun = false;
+    this.cheatInvincible = false;
+    this.cheatInfiniteLives = false;
     this.dotsCollected = this.dotDefs.map(function () { return false; });
     this.dotsCollectedCount = 0;
     this.score = 0;
@@ -1425,6 +1448,7 @@
     var keyBoost = soundKey("boost", "desert_boost");
     var keyDot = soundKey("dot", "desert_dot");
     var keyCheckpoint = soundKey("checkpoint", "desert_checkpoint");
+    var keyChomp = soundKey("chomp", "desert_chomp");
     this.jumpSound = this.cache.audio.exists(keyJump) ? this.sound.add(keyJump, { volume: 0.5 }) : null;
     this.deathSound = this.cache.audio.exists(keyDeath) ? this.sound.add(keyDeath, { volume: 0.7 }) : null;
     this.shieldLossSound = this.cache.audio.exists(keyShieldLoss) ? this.sound.add(keyShieldLoss, { volume: 0.7 }) : null;
@@ -1439,6 +1463,7 @@
     this.boostSound = this.cache.audio.exists(keyBoost) ? this.sound.add(keyBoost, { volume: 0.6 }) : null;
     this.dotSound = this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.8 }) : null;
     this.checkpointSound = this.cache.audio.exists(keyCheckpoint) ? this.sound.add(keyCheckpoint, { volume: 0.7 }) : (this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.7 }) : null);
+    this.chompSound = this.cache.audio.exists(keyChomp) ? this.sound.add(keyChomp, { volume: 0.6 }) : null;
     this.music = null;
     if (this.cache.audio.exists(keyMusic)) {
       var existingMusic = (typeof this.sound.get === "function") ? this.sound.get(keyMusic) : null;
@@ -1507,6 +1532,11 @@
     this.player = this.add.rectangle(0, 0, DRAGON_W, DRAGON_H, 0x4a9b4a);
     this.playerHead = this.add.rectangle(0, 0, 6, 12, 0x3d8b3d).setDepth(21);
     this.playerEye = this.add.rectangle(0, 0, 3, 3, 0xffffff).setDepth(21);
+    // Open mouth (only when chomp): upper/lower jaw + white teeth on roof and floor of mouth
+    this.playerUpperJaw = this.add.rectangle(0, 0, 6, 4, 0x3d8b3d).setDepth(21).setVisible(false);
+    this.playerLowerJaw = this.add.rectangle(0, 0, 6, 4, 0x3d8b3d).setDepth(21).setVisible(false);
+    this.chompTooth1 = this.add.triangle(0, 0, -2, -2, 2, -2, 0, 4, 0xffffff).setDepth(22).setVisible(false);
+    this.chompTooth2 = this.add.triangle(0, 0, -2, 2, 2, 2, 0, -4, 0xffffff).setDepth(22).setVisible(false);
     this.physics.add.existing(this.player, false);
     this.player.body.setSize(DRAGON_W, DRAGON_H);
     this.player.body.setOffset(0, 0);
@@ -1755,6 +1785,12 @@
         var mid = this.add.rectangle(it.x + it.w / 2, it.y + it.h - 16, it.w - 12, 6, 0x6b5a4a).setDepth(iz.depth + 1);
         var flame = this.add.ellipse(it.x + it.w / 2, it.y, it.w - 6, it.h - 6, 0xffb84d).setDepth(iz.depth + 2);
         this.itemVfx.push({ zone: iz, type: "fireTotem", base: base, mid: mid, flame: flame });
+      } else if (it.type === "chomp") {
+        var cx = it.x + it.w / 2;
+        var cy = it.y + it.h / 2;
+        var tooth1 = this.add.triangle(cx - 6, cy, 0, -10, 8, 0, 0, 10, 0xfacc15).setDepth(iz.depth + 1);
+        var tooth2 = this.add.triangle(cx + 6, cy, 0, -10, 8, 0, 0, 10, 0x84cc16).setDepth(iz.depth + 1);
+        this.itemVfx.push({ zone: iz, type: "chomp", tooth1: tooth1, tooth2: tooth2 });
       }
     }
 
@@ -1829,13 +1865,15 @@
       var lavaLeft = Math.max(0, 3 - (this.lavaBounceTotalUses || 0));
       lavaStr = "\nLava: " + lavaLeft + " left";
     }
+    var chompStr = this.chompCollected ? "\nChomp" : "";
     this.hudText.setText(
-      "Score: " + this.score + "  Best: " + bestScoreStr + "  Time: " + this.currentTime.toFixed(2) + "s\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr
+      "Score: " + this.score + "  Best: " + bestScoreStr + "  Time: " + this.currentTime.toFixed(2) + "s\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr + chompStr
     );
   };
 
   GameScene.prototype.onOverlapLava = function (player, zone) {
     if (this.gameWon || this.isDyingInLava) return;
+    if (this.cheatInvincible) return;
     var maxBouncesPerRun = 2;
     if (this.lavaBounceItemCollected && this.lavaBounceBounces < maxBouncesPerRun) {
       // One touch per "fall": overlap can fire every frame, so only count once per entry.
@@ -2031,21 +2069,29 @@
     var it = zone.getData("item");
     this.addScore(POINTS_POWERUP);
     if (it.type === "lavaBounce") {
-      // Lava orb: grants lava bounces. Picking it up replaces any fire totem (one power-up at a time).
       this.fireTotemCollected = false;
       this.fireBreathsLeft = 0;
+      this.chompCollected = false;
       this.lavaBounceItemCollected = true;
       this.lavaBounceBounces = 0;
       this.lavaBounceTotalUses = 0;
       this.lavaBounceCooldownUntil = 0;
     } else if (it.type === "fireTotem") {
-      // Fire totem: one breath. Picking it up replaces any lava orb (one power-up at a time).
       this.lavaBounceItemCollected = false;
       this.lavaBounceBounces = 0;
       this.lavaBounceTotalUses = 0;
       this.lavaBounceCooldownUntil = 0;
+      this.chompCollected = false;
       this.fireTotemCollected = true;
       this.fireBreathsLeft = 1;
+    } else if (it.type === "chomp") {
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = true;
     }
     zone.setData("collected", true);
     zone.setVisible(false);
@@ -2088,11 +2134,34 @@
   };
 
   GameScene.prototype.onOverlapCactus = function (player, hitbox) {
+    if (this.chompCollected) {
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      // Bounce player back a short distance from the cactus (hurt but no death)
+      var dx = this.player.x - hitbox.x;
+      var dy = this.player.y - hitbox.y;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var bounceSpeed = 200;
+      this.player.body.setVelocity((dx / len) * bounceSpeed, (dy / len) * bounceSpeed);
+      return;
+    }
     this.applyDeath();
   };
 
   GameScene.prototype.onOverlapScorpion = function (player, scorp) {
     if (scorp.getData("dead")) return;
+    if (this.chompCollected) {
+      var front = (this.player.facing === 1 && scorp.x > this.player.x) || (this.player.facing === -1 && scorp.x < this.player.x);
+      if (front) {
+        this.playSfx(this.chompSound, "chomp");
+        this.spawnChompEffect(scorp.x, scorp.y);
+        this.killScorpion(scorp);
+        return;
+      }
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      return;
+    }
     if (this.fireBreathsLeft > 0) {
       if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
       this.killScorpion(scorp);
@@ -2106,6 +2175,18 @@
 
   GameScene.prototype.onOverlapBuzzard = function (player, buzz) {
     if (buzz.getData("dead")) return;
+    if (this.chompCollected) {
+      var front = (this.player.facing === 1 && buzz.x > this.player.x) || (this.player.facing === -1 && buzz.x < this.player.x);
+      if (front) {
+        this.playSfx(this.chompSound, "chomp");
+        this.spawnChompEffect(buzz.x, buzz.y);
+        this.killBuzzard(buzz);
+        return;
+      }
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      return;
+    }
     if (this.fireBreathsLeft > 0) {
       if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
       this.killBuzzard(buzz);
@@ -2197,6 +2278,29 @@
     });
   };
 
+  GameScene.prototype.spawnChompEffect = function (x, y) {
+    var scene = this;
+    var top = this.add.triangle(x, y - 14, -6, -8, 6, -8, 0, 6, 0xffffff).setDepth(100);
+    var bot = this.add.triangle(x, y + 14, -6, 8, 6, 8, 0, -6, 0xffffff).setDepth(100);
+    this.tweens.add({
+      targets: [top, bot],
+      y: y,
+      duration: 80,
+      ease: "Power2",
+      onComplete: function () {
+        scene.tweens.add({
+          targets: [top, bot],
+          alpha: 0,
+          duration: 60,
+          onComplete: function () {
+            top.destroy();
+            bot.destroy();
+          }
+        });
+      }
+    });
+  };
+
   GameScene.prototype.killScorpion = function (scorp) {
     if (scorp.getData("dead")) return;
     scorp.setData("dead", true);
@@ -2240,13 +2344,63 @@
   };
 
   GameScene.prototype.applyDeath = function () {
+    if (this.cheatInvincible) return;
     if (!this.isDyingInLava) this.playSfx(this.deathSound, "death");
     this.lives--;
+    if (this.cheatInfiniteLives) this.lives = LIVES_START;
     if (this.lives <= 0) {
       this.lastCheckpointIndex = -1;
       this.lives = LIVES_START;
     }
     this.resetPlayer();
+  };
+
+  GameScene.prototype.applyCheat = function (code) {
+    code = (code || "").trim().toLowerCase();
+    if (!code) return "Enter a code.";
+    this.cheatsUsedThisRun = true;
+    if (code === "orb") {
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = false;
+      this.lavaBounceItemCollected = true;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      return "Lava orb added.";
+    }
+    if (code === "flame") {
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.chompCollected = false;
+      this.fireTotemCollected = true;
+      this.fireBreathsLeft = 1;
+      return "Fire totem added.";
+    }
+    if (code === "chomp") {
+      if (this.biomeId !== "desert") return "Chomp is Desert only.";
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = true;
+      return "Chomp added.";
+    }
+    if (code === "god") {
+      this.cheatInvincible = true;
+      return "Invincibility on.";
+    }
+    if (code === "lives") {
+      this.cheatInfiniteLives = true;
+      this.lives = LIVES_START;
+      return "Infinite lives on.";
+    }
+    this.cheatsUsedThisRun = false;
+    return "Unknown code.";
   };
 
   GameScene.prototype.resetPlayer = function () {
@@ -2435,6 +2589,7 @@
     this.fireBreathsLeft = 0;
     this.fireTotemCollected = false;
     this.breathActiveTime = 0;
+    this.chompCollected = false;
     if (this.lastCheckpointIndex < 0) {
       this.dotsCollected = this.dotDefs.map(function () { return false; });
       this.dotsCollectedCount = 0;
@@ -2479,8 +2634,10 @@
     var el = document.getElementById("winOverlay");
     if (!el) return;
     var userId = getScoreUserId();
-    pushScoreForLevel(this.currentLevelID || "", userId, this.score, this.currentTime);
-    if (this.score > (this.bestScorePoints || 0)) this.bestScorePoints = this.score;
+    if (!this.cheatsUsedThisRun) {
+      pushScoreForLevel(this.currentLevelID || "", userId, this.score, this.currentTime);
+      if (this.score > (this.bestScorePoints || 0)) this.bestScorePoints = this.score;
+    }
     if (fadeIn) {
       el.style.display = "flex";
       el.style.opacity = "0";
@@ -2504,9 +2661,15 @@
     if (scoreEl) scoreEl.textContent = String(this.score);
     if (dotsEl) dotsEl.textContent = this.dotsCollectedCount + "/" + NUM_DOTS;
     if (bestEl) {
-      if (this.score === this.bestScorePoints && this.bestScorePoints > 0) bestEl.textContent = "Best score: " + this.bestScorePoints + " (new!)";
-      else if (this.bestScorePoints != null && this.bestScorePoints > 0) bestEl.textContent = "Best score: " + this.bestScorePoints;
-      else bestEl.textContent = "Best score: --";
+      if (this.cheatsUsedThisRun) {
+        bestEl.textContent = "Cheats used — score not saved";
+      } else if (this.score === this.bestScorePoints && this.bestScorePoints > 0) {
+        bestEl.textContent = "Best score: " + this.bestScorePoints + " (new!)";
+      } else if (this.bestScorePoints != null && this.bestScorePoints > 0) {
+        bestEl.textContent = "Best score: " + this.bestScorePoints;
+      } else {
+        bestEl.textContent = "Best score: --";
+      }
     }
     var nextBtn = document.getElementById("winNextLevelBtn");
     if (nextBtn) {
@@ -2539,6 +2702,32 @@
         this.playerEye.y = this.player.y - 5;
         this.playerEye.scaleX = sx;
         this.playerEye.scaleY = sy;
+        var mouthX = this.player.x + fx * 15 * sx;
+        var mouthY = this.player.y;
+        if (this.playerUpperJaw && this.playerUpperJaw.active) {
+          this.playerUpperJaw.x = mouthX;
+          this.playerUpperJaw.y = mouthY - 4 * sy;
+          this.playerUpperJaw.scaleX = sx;
+          this.playerUpperJaw.scaleY = sy;
+        }
+        if (this.playerLowerJaw && this.playerLowerJaw.active) {
+          this.playerLowerJaw.x = mouthX;
+          this.playerLowerJaw.y = mouthY + 4 * sy;
+          this.playerLowerJaw.scaleX = sx;
+          this.playerLowerJaw.scaleY = sy;
+        }
+        if (this.chompTooth1 && this.chompTooth1.active) {
+          this.chompTooth1.x = mouthX;
+          this.chompTooth1.y = mouthY - 2 * sy;
+          this.chompTooth1.scaleX = sx;
+          this.chompTooth1.scaleY = sy;
+        }
+        if (this.chompTooth2 && this.chompTooth2.active) {
+          this.chompTooth2.x = mouthX;
+          this.chompTooth2.y = mouthY + 2 * sy;
+          this.chompTooth2.scaleX = sx;
+          this.chompTooth2.scaleY = sy;
+        }
       }
       if (this.winSequenceState === "holding") {
         this.winHoldTimer -= dt;
@@ -2562,12 +2751,20 @@
       this.player.alpha = alpha;
       this.playerHead.alpha = alpha;
       this.playerEye.alpha = alpha;
+      if (this.playerUpperJaw) this.playerUpperJaw.alpha = alpha;
+      if (this.playerLowerJaw) this.playerLowerJaw.alpha = alpha;
+      if (this.chompTooth1) this.chompTooth1.alpha = alpha;
+      if (this.chompTooth2) this.chompTooth2.alpha = alpha;
       if (this.lavaDeathTimer <= 0) {
         this.playSfx(this.deathSound, "death");
         this.applyDeath();
         this.player.alpha = 1;
         this.playerHead.alpha = 1;
         this.playerEye.alpha = 1;
+        if (this.playerUpperJaw) this.playerUpperJaw.alpha = 1;
+        if (this.playerLowerJaw) this.playerLowerJaw.alpha = 1;
+        if (this.chompTooth1) this.chompTooth1.alpha = 1;
+        if (this.chompTooth2) this.chompTooth2.alpha = 1;
       }
       return;
     }
@@ -2596,11 +2793,11 @@
       this.player.facing = 1;
     }
     // Change player color for buffs (only one power-up at a time):
-    // - lava orb: amber/gold blink (HUD shows bounces left)
-    // - fire totem: solid orange
+    // - lava orb: amber/gold blink; fire totem: solid orange; chomp (Desert): yellow/green blink
     var dragonColor = 0x4a9b4a;
     var fireActive = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
     var orbActive = this.lavaBounceItemCollected;
+    var chompActive = this.chompCollected;
     var period = 0.6;
     var tSec = time / 1000;
     var phase = (tSec / period) % 1;
@@ -2609,13 +2806,36 @@
       dragonColor = bright ? 0xfff3c4 : 0xf97316;
     } else if (fireActive) {
       dragonColor = 0xe05c20;
+    } else if (chompActive) {
+      dragonColor = bright ? 0xfacc15 : 0x84cc16;
     }
     this.player.fillColor = dragonColor;
     this.playerHead.fillColor = dragonColor;
     this.playerEye.fillColor = 0xffffff;
     var fx = this.player.facing;
-    this.playerHead.x = this.player.x + fx * 15;
-    this.playerHead.y = this.player.y;
+    var mouthX = this.player.x + fx * 15;
+    var mouthY = this.player.y;
+    if (chompActive) {
+      this.playerHead.setVisible(false);
+      this.playerUpperJaw.setVisible(true);
+      this.playerLowerJaw.setVisible(true);
+      this.playerUpperJaw.fillColor = dragonColor;
+      this.playerLowerJaw.fillColor = dragonColor;
+      this.playerUpperJaw.setPosition(mouthX, mouthY - 4);
+      this.playerLowerJaw.setPosition(mouthX, mouthY + 4);
+      this.chompTooth1.setPosition(mouthX, mouthY - 2);
+      this.chompTooth2.setPosition(mouthX, mouthY + 2);
+      this.chompTooth1.setVisible(true);
+      this.chompTooth2.setVisible(true);
+    } else {
+      this.playerHead.setVisible(true);
+      this.playerUpperJaw.setVisible(false);
+      this.playerLowerJaw.setVisible(false);
+      this.chompTooth1.setVisible(false);
+      this.chompTooth2.setVisible(false);
+    }
+    this.playerHead.x = mouthX;
+    this.playerHead.y = mouthY;
     this.playerEye.x = this.player.x + fx * 8;
     this.playerEye.y = this.player.y - 5;
 
@@ -3015,6 +3235,14 @@
           flame.setVisible(true);
           var wobble = 0.9 + 0.12 * Math.sin(t * 4);
           flame.setScale(1, wobble);
+        } else if (v.type === "chomp") {
+          if (collected) {
+            v.tooth1.setVisible(false);
+            v.tooth2.setVisible(false);
+            continue;
+          }
+          v.tooth1.setVisible(true);
+          v.tooth2.setVisible(true);
         }
       }
     }
@@ -3598,6 +3826,60 @@
         if (overlay) overlay.style.display = "none";
       });
     }
+
+    var cheatOverlay = document.getElementById("cheatOverlay");
+    var cheatInput = document.getElementById("cheatInput");
+    var cheatForm = document.getElementById("cheatForm");
+    var cheatMessage = document.getElementById("cheatMessage");
+    var cheatCloseBtn = document.getElementById("cheatCloseBtn");
+    function openCheatPanel() {
+      if (cheatOverlay) {
+        cheatOverlay.style.display = "flex";
+        if (cheatInput) {
+          cheatInput.value = "";
+          cheatInput.focus();
+        }
+        if (cheatMessage) {
+          cheatMessage.textContent = "";
+          cheatMessage.className = "cheat-message";
+        }
+      }
+    }
+    function closeCheatPanel() {
+      if (cheatOverlay) cheatOverlay.style.display = "none";
+    }
+    window.addEventListener("keydown", function (e) {
+      if (e.key === "`" || e.key === "~") {
+        if (cheatOverlay && cheatOverlay.style.display === "flex") {
+          closeCheatPanel();
+          e.preventDefault();
+        } else {
+          openCheatPanel();
+          e.preventDefault();
+        }
+      }
+      if (e.key === "Escape" && cheatOverlay && cheatOverlay.style.display === "flex") {
+        closeCheatPanel();
+        e.preventDefault();
+      }
+    });
+    if (cheatForm && cheatInput && cheatMessage) {
+      cheatForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var code = cheatInput.value.trim();
+        var scene = window.__dragonGame && window.__dragonGame.scene.getScene("Game");
+        if (!scene) {
+          cheatMessage.textContent = "Start a level first.";
+          cheatMessage.className = "cheat-message err";
+          return;
+        }
+        var msg = scene.applyCheat(code);
+        cheatMessage.textContent = msg;
+        cheatMessage.className = "cheat-message " + (msg.indexOf("Unknown") !== -1 || msg.indexOf("Enter") !== -1 || msg.indexOf("Desert") !== -1 ? "err" : "ok");
+        cheatInput.value = "";
+      });
+    }
+    if (cheatCloseBtn) cheatCloseBtn.addEventListener("click", closeCheatPanel);
 
     document.getElementById("winNextLevelBtn").addEventListener("click", function () {
       var data = loadAllLevels(WORLD_H);

@@ -4,10 +4,10 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 
 ## About the game
 
-- **Goal:** Reach the golden door at the end of the level before running out of lives. Collect dots, avoid or defeat slimes, bats, and crawlers, and use lava bounces and power-ups to get ahead. You can hold only one power-up at a time (lava orb or fire totem); picking up a new one replaces the previous. **Score** is earned from dots, creature kills, power-ups, and winning; higher difficulty multiplies points. Scores are stored per level per user (or "anonymous" if not signed in).
+- **Goal:** Reach the golden door at the end of the level before running out of lives. Collect dots, avoid or defeat slimes, bats, and crawlers, and use lava bounces and power-ups to get ahead. You can hold only one power-up at a time (lava orb, fire totem, or in Desert the chomp power-up); picking up a new one replaces the previous. **Score** is earned from dots, creature kills, power-ups, and winning; higher difficulty multiplies points. Scores are stored per level per user (or "anonymous" if not signed in).
 - **Movement:** Run left/right, jump (including double jump in mid-air), slam down (hold Down/S in the air to drop fast), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
 - **Hazards:** Lava (instant death unless you have a lava bounce), slimes, bats, crawlers, and stalactites. Checkpoints and extra lives help you progress.
-- **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem).
+- **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem; Desert also has the chomp power-up).
 - **Instructions:** The menu **Instructions** button opens a dialog with “How to play”—keyboard and on-screen controls, goal, and biome-specific hazards. The page footer shows only the repo and Phaser acknowledgements.
 
 ## How to run
