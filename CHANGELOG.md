@@ -8,7 +8,7 @@ All notable changes to Dragon Lava Jump are documented here.
 
 ### Added
 
-- **Cheat system:** Press **`** or **~** to open the cheat code panel. Enter a code and press Enter. Codes: **orb** (lava orb), **flame** (fire totem), **chomp** (Desert only), **god** (invincibility), **lives** (infinite lives). Using any cheat disables score saving for that run (win overlay shows "Cheats used — score not saved"). See .cursorrules Cheats section.
+- **Cheat system:** Press **`** or **~** to open the cheat code panel; on mobile a **Cheats** button appears in the menu to open the panel. Enter a code and press Enter. Codes: **orb** (lava orb), **flame** (fire totem), **chomp** (Desert only), **god** (invincibility), **lives** (infinite lives). Using any cheat disables score saving for that run (win overlay shows "Cheats used — score not saved"). See .cursorrules Cheats section.
 
 - **Chomp power-up (Desert only):** New power-up in Desert levels. Picking it up gives long teeth and lets you chomp scorpions and buzzards when they touch you from the **front** (creature dies, you take no damage; plays `chomp.mp3`). If a creature touches you from **behind, top, or bottom**—or you touch a cactus—you lose chomp but survive (one “shield” touch; creature is not killed; plays `shield-loss.mp3`). Dragon blinks yellow and green and shows two long teeth. One power-up at a time (chomp replaces orb/totem and vice versa). Audio: `assets/audio/chomp.mp3` (optional override `assets/biomes/desert/audio/chomp.mp3`). HUD shows "Chomp" when active. Needles still kill. See .cursorrules Power-ups and Desert biome.
 

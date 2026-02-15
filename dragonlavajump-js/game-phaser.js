@@ -3880,6 +3880,8 @@
       });
     }
     if (cheatCloseBtn) cheatCloseBtn.addEventListener("click", closeCheatPanel);
+    var cheatsBtn = document.getElementById("cheatsBtn");
+    if (cheatsBtn) cheatsBtn.addEventListener("click", openCheatPanel);
 
     document.getElementById("winNextLevelBtn").addEventListener("click", function () {
       var data = loadAllLevels(WORLD_H);

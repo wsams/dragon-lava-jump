@@ -45,6 +45,16 @@ select, #menu button {
   background: #4b5563;
   color: #f3f4f6;
 }
+/* Cheats button: visible only on touch devices / small screens (no keyboard for ~) */
+#cheatsBtn.cheats-btn-mobile {
+  display: none;
+}
+@media (pointer: coarse), (max-width: 768px) {
+  #cheatsBtn.cheats-btn-mobile {
+    display: inline-block;
+  }
+}
+
 #menu #shareBtn {
   font-size: 16px;
   padding: 4px 10px;
