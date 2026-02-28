@@ -35,7 +35,7 @@
 ## Requirements
 
 - Colors: platform, lava/quicksand, goal as specified (sandy palette).
-- Cacti: 3 varieties; touch = death unless chomp (then lose chomp, shield sound, bounce, survive). Needle-shooter: shake then 3–4 needles; needles = death.
+- Cacti: 3 varieties; touch = death unless chomp (then lose chomp, shield sound, bounce, survive). Needle-shooter: shake then 3–4 needles; needles = death. The flame breath can burn the cacti. There should be a short animation of them sizzling and going up in smoke and going poof and disappearing.
 - Scorpions: patrol platform; fire totem kills; chomp front = kill, back/top/bottom = lose chomp, survive.
 - Buzzards: same rules as scorpions.
 - Dots: no overlap with cacti; use CACTUS_AVOID_BAND in placement.

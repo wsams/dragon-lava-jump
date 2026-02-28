@@ -10,7 +10,7 @@
   - **orb** — Lava orb (replaces other power-ups). Run again to remove.
   - **flame** — Fire totem (replaces other power-ups). Run again to remove.
   - **chomp** — Chomp (Desert only; replaces other power-ups). Run again to remove.
-  - **god** — Invincibility: no death from hazards or enemies. Run again to turn off. When on, a gold border is drawn around the screen (fixed UI, `godModeBorder` graphics).
+  - **god** — Invincibility: no death from hazards or enemies. Run again to turn off. When on, a gold border is drawn around the screen (fixed UI, `godModeBorder` graphics). No obstacles including things like stalactites and cacti can harm you. Those type of objects you can walk right through with god mode on.
   - **lives** — Infinite lives: lives reset to `LIVES_START` after each death. Run again to turn off.
 - **Implementation:** Scene flags `cheatsUsedThisRun`, `cheatInvincible`, `cheatInfiniteLives`. `applyCheat(code)` in `game-phaser.js`; cheat overlay and key handler in same file (DOM). Cheat flags are reset when a new level is loaded (scene create).
 

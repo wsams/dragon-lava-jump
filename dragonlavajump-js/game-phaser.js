@@ -1699,6 +1699,7 @@
         hitbox.setData("variety", cdef.variety);
         hitbox.setData("shakeTimer", 0);
         hitbox.setData("fired", false);
+        hitbox.setData("burned", false);
         this.cactusHitboxes.push(hitbox);
         var gfx = this.add.graphics().setDepth(2);
         if (cdef.variety === 0) {
@@ -1718,6 +1719,7 @@
           gfx.fillStyle(0x1a3a17, 1);
           for (var n = 0; n < 6; n++) gfx.fillCircle(cx + (n % 2) * 6 - 3, cy - CACTUS_H / 2 + 6 + n * 6, 2);
         }
+        hitbox.setData("gfx", gfx);
         this.cacti.push({ hitbox: hitbox, gfx: gfx, def: cdef });
       }
       // Scorpions (patrol on platform)
@@ -2127,6 +2129,7 @@
   };
 
   GameScene.prototype.onOverlapSlime = function (player, slime) {
+    if (this.cheatInvincible) return;
     if (slime.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
       if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
@@ -2141,10 +2144,12 @@
   };
 
   GameScene.prototype.onOverlapBat = function (player, bat) {
+    if (this.cheatInvincible) return;
     this.applyDeath();
   };
 
   GameScene.prototype.onOverlapCrawler = function (player, crawler) {
+    if (this.cheatInvincible) return;
     if (crawler.getData("dead")) return;
     if (this.fireBreathsLeft > 0) {
       if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
@@ -2158,10 +2163,13 @@
   };
 
   GameScene.prototype.onOverlapStalactite = function (player, st) {
+    if (this.cheatInvincible) return;
     this.applyDeath();
   };
 
   GameScene.prototype.onOverlapCactus = function (player, hitbox) {
+    if (this.cheatInvincible) return;  // god mode: ignore cacti (no bounce, no death, no chomp loss)
+    if (hitbox.getData("burned")) return;
     if (this.cactusDeathDelay > 0) return;  // already in cactus-death delay
     if (this.chompCollected) {
       this.chompCollected = false;
@@ -2180,6 +2188,7 @@
   };
 
   GameScene.prototype.onOverlapScorpion = function (player, scorp) {
+    if (this.cheatInvincible) return;
     if (scorp.getData("dead")) return;
     if (this.chompCollected) {
       var front = (this.player.facing === 1 && scorp.x > this.player.x) || (this.player.facing === -1 && scorp.x < this.player.x);
@@ -2205,6 +2214,7 @@
   };
 
   GameScene.prototype.onOverlapBuzzard = function (player, buzz) {
+    if (this.cheatInvincible) return;
     if (buzz.getData("dead")) return;
     if (this.chompCollected) {
       var front = (this.player.facing === 1 && buzz.x > this.player.x) || (this.player.facing === -1 && buzz.x < this.player.x);
@@ -2230,7 +2240,48 @@
   };
 
   GameScene.prototype.onOverlapNeedle = function (player, needle) {
+    if (this.cheatInvincible) return;
     this.applyDeath();
+  };
+
+  GameScene.prototype.burnCactus = function (hitbox) {
+    if (hitbox.getData("burned")) return;
+    hitbox.setData("burned", true);
+    if (hitbox.body) hitbox.body.checkCollision.none = true;
+    var gfx = hitbox.getData("gfx");
+    var cx = hitbox.x;
+    var cy = hitbox.y;
+    if (gfx) {
+      this.tweens.add({
+        targets: gfx,
+        alpha: 0,
+        duration: 380,
+        ease: "Power2.In",
+        onComplete: function () {
+          gfx.setVisible(false);
+          hitbox.setVisible(false);
+        },
+        callbackScope: this
+      });
+    } else {
+      hitbox.setVisible(false);
+    }
+    var smoke = this.add.graphics().setDepth(4);
+    smoke.fillStyle(0x555555, 0.7);
+    smoke.fillCircle(0, 0, 12);
+    smoke.fillCircle(-6, -4, 8);
+    smoke.setPosition(cx, cy);
+    smoke.setAlpha(1);
+    this.tweens.add({
+      targets: smoke,
+      alpha: 0,
+      scaleX: 2.5,
+      scaleY: 2.5,
+      duration: 400,
+      ease: "Power2.Out",
+      onComplete: function () { smoke.destroy(); },
+      callbackScope: this
+    });
   };
 
   // Simple death animations for monsters: shrink + fade, then disable collisions
@@ -3057,6 +3108,14 @@
             this.killBuzzard(buzz);
           }
         }
+        for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+          var ch = this.cactusHitboxes[cai];
+          if (ch.getData("burned")) continue;
+          if (breathX - breathW / 2 < ch.x + CACTUS_W / 2 && breathX + breathW / 2 > ch.x - CACTUS_W / 2 &&
+              breathY < ch.y + CACTUS_H / 2 && breathY + breathH > ch.y - CACTUS_H / 2) {
+            this.burnCactus(ch);
+          }
+        }
       }
       this.breathActiveTime -= dt;
     } else {
@@ -3242,6 +3301,10 @@
         buzz.x = Phaser.Math.Clamp(buzz.x + vx * dt, buzzXMin, buzzXMax);
         buzz.y = Phaser.Math.Clamp(buzz.y + vy * dt, buzzYMin, buzzYMax);
         buzz.body.updateFromGameObject();
+        if (rng() < 0.4 * dt) {
+          var pv = this.getProximityVolume(buzz.x, buzz.y);
+          if (pv > 0.03) this.playSfx(this.buzzardSound, "buzzard", { volume: 0.65 * pv });
+        }
       }
       for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
         var bzInfo = this.buzzardParts[bpi];
@@ -3254,7 +3317,7 @@
       // Needle-shooter cacti (variety 2): when player close, shake then fire 4 needles
       for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
         var ch = this.cactusHitboxes[cai];
-        if (ch.getData("variety") !== 2 || ch.getData("fired")) continue;
+        if (ch.getData("burned") || ch.getData("variety") !== 2 || ch.getData("fired")) continue;
         var dx = this.player.x - ch.x;
         var dy = this.player.y - ch.y;
         var dist = Math.sqrt(dx * dx + dy * dy);
