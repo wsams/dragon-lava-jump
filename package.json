@@ -1,0 +1,12 @@
+{
+  "name": "dragon-lava-jump",
+  "private": true,
+  "scripts": {
+    "minify": "terser js/game-phaser.js -o js/main.min.js -c -m",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.0.11",
+    "terser": "^5.27.0"
+  }
+}

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+npm run minify
+git add js/main.min.js
