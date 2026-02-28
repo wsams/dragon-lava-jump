@@ -6,7 +6,7 @@
 
 - **Path/key tables:** Cave audio paths and keys are in [Biome: Cave](biome-cave.md#audio--paths-and-keys-cave). Desert optional overrides are in [Biome: Desert](biome-desert.md#audio--paths-and-keys-desert-optional-overrides).
 - **Fallbacks:** If `checkpoint.mp3` is missing (Cave), the dot sound is used. Desert: any slot without a file in `assets/biomes/desert/audio/` uses the Cave sound; if both are missing, no sound plays and the console shows which file is missing.
-- **Console:** When a sound would play but no file is available (Cave or Desert), warn: `[Dragon Lava Jump] Sound not available (missing file): <name>`. When a Desert override file fails to load at startup, warn: `[Dragon Lava Jump] Desert audio file missing (see .cursorrules for paths): <key>`.
+- **Console:** When a sound would play but no file is available (Cave or Desert), warn: `[Dragon Lava Jump] Sound not available (missing file): <name>`. When a Desert override file fails to load at startup, warn: `[Dragon Lava Jump] Desert audio file missing (see .agents/specs/biome-desert.md for paths): <key>`.
 - **User gesture:** Audio may require a user click/tap before playing in some browsers.
 
 ## Requirements

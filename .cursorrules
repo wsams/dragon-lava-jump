@@ -1,217 +1,28 @@
 # Dragon Lava Jump – Cursor Rules
 
-> **Note:** This file will become `.cursorrules` at the project root. Cursor reads `.cursorrules` and uses it to guide edits. Keep these rules updated as the game evolves.
+> High-level rules for the editor. **Feature behavior, UI, audio, biomes, and mechanics are specified in `.agents/specs/`.** When implementing or changing game behavior, read the relevant spec file(s) first and follow them.
 
 ---
 
-## Project Structure
+## Specs are the source of truth
 
-- **Single-script game:** Main logic is in `dragonlavajump-js/game-phaser.js` (no ES modules). It runs from `file://` or a simple static server.
-- **Phaser 3** with Arcade physics.
-- **Entry point:** `dragonlavajump.html` loads the game; `dragonlavajump-css/styles.css` handles layout.
-- **Assets:** Shared audio lives in `assets/audio/`. Biome-specific assets (e.g. Desert) live under `assets/biomes/<biomeId>/` (e.g. `assets/biomes/desert/audio/`) so they do not clash with other biomes.
-- **Legacy:** Code in `legacy/` is kept for reference. Do not rely on it for current behavior.
+- **Feature details** (player, biomes, power-ups, checkpoints, level design, score, UI, audio, cheats, etc.) live in **`.agents/specs/`** as markdown files.
+- Use the **index** in `.agents/specs/README.md` to find the right spec. When asked to add, change, or fix something, refer to the corresponding spec and keep behavior in sync with it.
+- Update the spec when you add or change a feature so the docs stay accurate.
 
 ---
 
-## Biomes
+## Project
 
-- **Concept:** A biome defines world style, level layout generation, and biome-specific creatures, obstacles, and power-ups. The same seed and difficulty produce different levels per biome.
-- **Registry:** Biomes are defined in `game-phaser.js` (e.g. `BIOMES.default`, `BIOMES.desert`). Each biome has `id`, `name`, `assetBasePath`, and `generateLevel(difficulty, seed, H)`.
-- **UI:** Biome selector in the menu. Choosing a biome and generating a new level (or loading by seed) produces a level fully styled for that biome. Selection is persisted in localStorage (`dragonBiome`).
-- **Level data:** Stored and shared level data includes `biomeId`. Share links may include biome in the hash (e.g. `#seed/difficulty/desert`).
-- **Entity lists:** Each biome declares arrays: `creatures`, `obstacles`, `powerUps`. Level generation uses `runBiomeGenerators(biome, options)` to fill layout from these lists. Scene create/update use the same lists to spawn and tick only the entities for the current biome. Implementations (slime, bat, crawler, scorpion, buzzard, stalactite, cactus, etc.) are shared; to add e.g. scorpions to Cave, add `"scorpion"` to `DefaultBiome.creatures` (and ensure the default layout options support it). Same idea for obstacles and power-ups: hot-swap by editing the biome’s list.
-
----
-
-## Player (Dragon)
-
-- **Visual:** Body rectangle plus separate head (nose) and eye. All must move and scale together (including win animation and lava death fade). No horns or teeth.
-- **Color:** Base green; turns orange when lava orb or fire totem active (orb also blinks).
-- **Motion trail:** Should appear when moving quickly or boosting. Trail color must match dragon color (green or orange).
-- **Controls:** Arrow keys / A,D for move; Space for jump; F for boost; G for fire breath (when totem active).
-- **Double jump:** One extra jump in mid-air. A small shimmering purple platform appears where you jump from, is single-use (fall-through after leaving), then fades out.
+- **Game logic:** `dragonlavajump-js/game-phaser.js` (single script, no ES modules). Phaser 3, Arcade physics. Runs from `file://` or a static server.
+- **Entry:** `dragonlavajump.html` + `dragonlavajump-css/styles.css`.
+- **Assets:** `assets/audio/` for shared audio; `assets/biomes/<biomeId>/` for biome-specific assets (e.g. `assets/biomes/desert/audio/`).
+- **Legacy:** `legacy/` is reference only; do not rely on it for current behavior.
 
 ---
 
-## Player Mechanics
-
-- **Jump:** Standard jump and double jump. One double jump per flight; it resets only when landing on a real platform (not the purple double-jump phantom). Ground detection uses a lenient platform edge (`GROUND_EDGE_TOLERANCE`, `GROUND_TOP_TOLERANCE`) so jumping from the very tip of a platform counts as a ground jump. Uses `jump.mp3`.
-- **Slam down (↓ / S):** Hold Down (or S) while in the air to drop straight downward at a fixed fast speed (Tetris-style). Not instant—a quick animation (`SLAM_DOWN_VY`). Use to avoid hazards by shooting down. No effect when on ground. Onscreen: horizontal Down button between Left and Right (75% height).
-- **Boost (F):** Horizontal-only, forward dash in mid-air. Once per jump. No vertical component. Uses `boost.mp3`.
-- **Fire breath (G):** Available only when you have the fire totem. Kills slimes, crawlers, and bats (Cave) and scorpions and buzzards (Desert). Uses `breath.mp3`.
-
----
-
-## Power-ups (shared across biomes)
-
-- **One at a time:** Picking up a power-up **replaces** the current one (if any). You can only have one of lava orb, fire totem, or chomp (chomp is Desert only). This allows distinct dragon colors/effects per power-up.
-- **Lava orb:** Lets you bounce off lava/quicksand instead of dying. Use limit: 3 lava touches total, then orb is lost. Also lost when hit by slime or crawler (Cave) (shield loss). Dragon: **amber/gold blink** while you have it. Uses `shield-loss.mp3` when lost on hit.
-- **Fire totem:** Grants 1 fire breath (G). Kills slimes and crawlers (Cave). Lost when you use it or when hit by slime/crawler (shield loss). Dragon: **solid orange** while you have it. Uses `breath.mp3` when firing, `shield-loss.mp3` when lost on hit.
-- **Chomp (Desert only):** Collect the chomp power-up to gain long teeth and chomp creatures. Dragon blinks **yellow and green** and shows two long teeth in front. **Front contact** with a scorpion or buzzard: you chomp them (kill, no damage); uses `chomp.mp3`. **Contact from behind, top, or bottom** (or jumping into a cactus): you lose chomp and take no damage (one “shield” touch—creature is not killed). Needles still kill. Picking up chomp replaces lava orb/fire totem; picking up orb/totem replaces chomp. Uses `chomp.mp3` when chomping, `shield-loss.mp3` when losing chomp on wrong-side or cactus touch.
-- **Item pickup:** Orb, totem, and (in Desert) chomp are visible items. Picking one up activates it and clears the other (one power-up at a time). No pickup sound.
-
----
-
-## Checkpoints (shared)
-
-- **Count:** Exactly 2 per level at 1/3 and 2/3 of the path (platform sequence).
-- **Activation:** When you touch a checkpoint, it activates (flag turns golden, sound plays). Only the first touch counts. Uses `checkpoint.mp3` (or `dot.mp3` if checkpoint is missing).
-- **Respawn:** On death, respawn at the last checkpoint until you have died 3 times. After 3 deaths, restart from the beginning.
-- **Reset visuals:** When the game resets after all lives expired (or on Replay), checkpoint flags and poles must return to their original colors (green flag `0x48bb78`, gray pole `0x718096`). Desert may style checkpoints differently (same logic).
-
----
-
-## Level Design (shared)
-
-- **Seed:** Random seed drives level generation per biome. Same seed + same biome produces the same layout.
-- **Length:** Level length is fixed at 4000 px. World height is **dynamic** per level.
-- **Goal:** Goal at the end of the level. Win sequence: dragon enters the door (animation), `music.mp3` fades down, `win.mp3` plays, win overlay fades in after a short delay. Styling may differ per biome (e.g. golden door vs desert pillar).
-- **Dots:** 30 collectible dots per level. Collecting one uses `dot.mp3`. Dots and checkpoints are never placed near static obstacles: they avoid slimes, cacti, and the band under stalactites (`STALACTITE_AVOID_BAND`). Checkpoints are not placed on platforms that have a slime, cactus, or stalactite above them.
-- **Power-ups (placement):** Lava orb, fire totem, and (in Desert) chomp are placed above a platform (centered with small wiggle) so they are reachable; when no platforms are provided they fall back to a world-height–based position.
-- **Replay:** Replay always starts from the beginning, not from the last checkpoint.
-
----
-
-## Default biome (Cave)
-
-- **Obstacles:** Stalactites (ceiling hazards, touch = death; `death.mp3`). Lava (instant death unless lava orb; `lava.mp3` on death). Falling platforms (drop when you step on them; respawn on death; `platform-step.mp3`, `platform-fall.mp3`).
-- **Enemies:** Slime (jumps on platforms; contact kills unless fire breath; fire breath kills slime; `slime.mp3`, `shield-loss.mp3`, `death.mp3`). Bat (flying; contact kills; no shield; `bat.mp3`, `death.mp3`). Crawler (moves around platform edges; same as slime re fire breath; `crawler.mp3`, `shield-loss.mp3`, `death.mp3`).
-- **Layout:** Dungeon-style segments. Dynamic world height; ceiling and floor change. Segments: right → up/down → right → up/down → … with a final right segment. Up segments climb into tall shafts; down segments descend into deep pits. World height from platform bounds (lowest platform bottom + 120 px), at least 360 px.
-- **Audio:** All under `assets/audio/`. See Audio table below.
-
----
-
-## Desert biome
-
-- **Style:** Sandy colors (e.g. platform `0xc4a574`, lava/quicksand `0xb8860b`, goal `0xdaa520`). Level layout mostly flat and long; some platforms double or triple length.
-- **Obstacles:** Cacti on platforms (3 varieties: saguaro, barrel, needle-shooter). Touching any cactus hurts (death), unless you have the chomp power-up—then you lose chomp, are hurt (shield-loss sound), are bounced back from the cactus, and survive (one touch). Needle-shooter (variety 2): when player is close it “shakes” then shoots 3–4 needles in all directions; needles are dodgeable projectiles; touching a needle kills.
-- **Enemies:** Scorpions patrol the ground (platform) back and forth; contact kills unless you have fire totem (kill them) or chomp (front = chomp kill, back/top/bottom = lose chomp, survive). Buzzards: same as scorpions for fire totem and chomp.
-- **Layout:** Mostly horizontal, flat platforms; no stalactites; same checkpoints (2) and goal at end, styled for desert. Same 30 dots, lava orb, fire totem, and chomp (Desert-only power-up) mechanics.
-- **Dots and cacti:** Dots must not be placed touching or overlapping cacti (so they can be collected). Level generation keeps a clear band around each cactus when placing dots (`CACTUS_AVOID_BAND`).
-- **Audio:** Prefer `assets/biomes/desert/audio/` for desert-specific sounds when added; shared sounds can still come from `assets/audio/`.
-
----
-
-## Score
-
-- **Points:** Dots (10), creature kills (25), power-ups (50), win (100). All values are scaled by difficulty: `1 + (difficulty - 1) * SCORE_DIFFICULTY_FACTOR` so harder levels award more points per action.
-- **Run score:** Tracks during the run; resets when you restart from the beginning (all lives lost). Respawn at checkpoint keeps current score.
-- **Storage:** Scores are stored per level per user in `dragonScores` (localStorage). User is `getProfileUsername()` or `"anonymous"` if not set. **Only completed (won) runs are logged;** incomplete runs are not stored. Each win appends `{ score, time }` to that level’s list for that user. Best score for a level is the max score in that list.
-- **HUD:** Shows current Score, Best score (for this level + user), Time, Dots, Lives. Win overlay shows Score, Best score, Time, Dots.
-
-## Leaderboard
-
-- **Button:** “Leaderboard” in the menu opens the level leaderboard for the **level currently being played (from the game scene; if no game running, uses selected level in dropdown). Any level ever completed—pack, seed, or random—has a leaderboard**. If “New Random Level” is selected, the user is prompted to select a level first.
-- **Scope:** Includes non-default levels (pack, seed-based, random). Display name from `getLevelDisplayName(levelId)`.
-- **Content:** List of every completed run for that level: rank, player (userId), score, and time. Sorted by score descending. Only wins are in the list (incomplete runs are never logged).
-- **UI:** Overlay panel (same style as win overlay) with close button, level name, and a table. Empty state: “No completed runs yet. Win the level to appear here.”
-
-## Instructions & on-screen controls
-
-- **Instructions dialog:** An "Instructions" button in the menu opens an overlay (same style as leaderboard) titled "How to play" with the full controls (keyboard and on-screen), goal, and biome-specific hazards (Cave vs Desert). Use this as the single in-game source for control and goal text; the page footer shows only repo and Phaser acknowledgements.
-- **On-screen control icons:** The touch buttons (Left, Right, Down, Breath, Jump, Boost) use **inline SVG icons only**—no text labels—so that long-press on a button does not trigger OS text selection. Each button keeps an `aria-label` for accessibility. Icons: **Left** = left chevron, **Right** = right chevron, **Down** = down chevron (slam), **Breath** = flame, **Jump** = up chevron, **Boost** = two outward-pointing arrows (← and →). Implemented in `dragonlavajump.html` (SVG inside each button) and `dragonlavajump-css/styles.css` (`.btn-icon` sizing and button flex centering).
-
-## Lives & Timer
-
-- **Lives:** 3 per run. Lose one on death.
-- **Timer:** Runs while you have lives. Resets only when you lose all 3 lives and restart from the beginning. Do not reset the timer when respawning at a checkpoint.
-
----
-
-## UI
-
-- **HUD:** Must show time, best time, dots, lives, level, flame (fire breath), lava (orb uses left). Keep it readable and complete.
-- **Biome select:** Dropdown for biome (e.g. Cave, Desert). Persisted. New/random level and seed-based load use selected biome.
-- **Level select:** Dropdown for built-in levels (Cave pack). Changing levels should load the correct level.
-- **Previously played:** Dropdown for recently completed levels.
-- **Difficulty:** Dropdown for difficulty (affects level generation).
-- **Mute buttons:** Separate SFX and music toggles. Must persist. SFX affects all sounds except `music.mp3`; music toggle affects `music.mp3` only.
-- **Win screen:** Time, dots, best, and buttons. Fade in after the win animation.
-- **New level:** Button to start a new random level (uses selected biome).
-- **Restart:** Button to restart the current level from the beginning (same as Replay; useful e.g. when stuck in lava with god mode). Hides win overlay and calls `startOrRestartGame()` so the same level reloads.
-- **Share:** Button to share the current level (seed/difficulty and biome when desert).
-- **Instructions:** Menu button opens the "How to play" overlay (see Instructions & on-screen controls).
-- **Sandbox direction:** The game may evolve toward a sandbox/creative-style environment (e.g. Minecraft-style creative within a level world system). Restart and cheats support this use case.
-
-- **Menu header (dark mode):** Keep the menu bar compact and dark-mode friendly. Buttons and selects use dark gray (`#374151`) background with light gray (`#d1d5db`) text. Use common symbols where possible:
-  - Share: ⤴ symbol (with `aria-label="Share"`). On copy success, flash magenta glow style; do not change the button text (avoids layout shift).
-  - Music: 🔊♪ when on, 🔇♪ when muted
-  - SFX: 🔊 FX when on, 🔇 FX when muted
-  - New level: short label (e.g. "New")
-  Keep padding compact (4–6px), small gaps. Do not revert to light buttons or long text labels.
-- **Tooltips:** All menu buttons and selects must have `title` attributes for hover tooltips.
-- **Player name:** No "Player:" label in the header. Display the username in a pill design (rounded, dark background). When editing, show input + Save only. Input should also be pill-shaped.
-
----
-
-## Audio
-
-- **Default (Cave) – files in `assets/audio/`:** Do not remove or rename without updating load calls. Keep these exact paths and keys:
-
-  | File | Load path | Key in code |
-  |------|-----------|--------------|
-  | `jump.mp3` | `assets/audio/jump.mp3` | `"jump"` |
-  | `death.mp3` | `assets/audio/death.mp3` | `"death"` |
-  | `shield-loss.mp3` | `assets/audio/shield-loss.mp3` | `"shieldLoss"` |
-  | `lava.mp3` | `assets/audio/lava.mp3` | `"lavaHit"` |
-  | `bat.mp3` | `assets/audio/bat.mp3` | `"batChitter"` |
-  | `crawler.mp3` | `assets/audio/crawler.mp3` | `"crawlerSlide"` |
-  | `slime.mp3` | `assets/audio/slime.mp3` | `"slimeJump"` |
-  | `breath.mp3` | `assets/audio/breath.mp3` | `"breath"` |
-  | `platform-step.mp3` | `assets/audio/platform-step.mp3` | `"platformStep"` |
-  | `platform-fall.mp3` | `assets/audio/platform-fall.mp3` | `"platformFall"` |
-  | `win.mp3` | `assets/audio/win.mp3` | `"win"` |
-  | `music.mp3` | `assets/audio/music.mp3` | `"music"` |
-  | `boost.mp3` | `assets/audio/boost.mp3` | `"boost"` |
-  | `dot.mp3` | `assets/audio/dot.mp3` | `"dot"` |
-  | `checkpoint.mp3` | `assets/audio/checkpoint.mp3` | `"checkpoint"` |
-  | `chomp.mp3` | `assets/audio/chomp.mp3` | `"chomp"` (used when chomping in Desert) |
-
-- **Desert – files in `assets/biomes/desert/audio/`:** Optional overrides. Put only the files you want to override; same file names as Cave (see table below). If a file is **present** in the desert directory, it is used when playing Desert; if **missing**, the game uses the default (Cave) sound for that slot. If **no** sound file is found for a slot (neither desert nor default), no sound plays and a message is written to the **console** so you know what is still missing. Use the tables in this section as the list of file names and paths for each directory.
-
-  | File | Load path | Key in code |
-  |------|-----------|--------------|
-  | `jump.mp3` | `assets/biomes/desert/audio/jump.mp3` | `"desert_jump"` |
-  | `death.mp3` | `assets/biomes/desert/audio/death.mp3` | `"desert_death"` |
-  | `shield-loss.mp3` | `assets/biomes/desert/audio/shield-loss.mp3` | `"desert_shieldLoss"` |
-  | `lava.mp3` | `assets/biomes/desert/audio/lava.mp3` | `"desert_lavaHit"` |
-  | `breath.mp3` | `assets/biomes/desert/audio/breath.mp3` | `"desert_breath"` |
-  | `platform-step.mp3` | `assets/biomes/desert/audio/platform-step.mp3` | `"desert_platformStep"` |
-  | `platform-fall.mp3` | `assets/biomes/desert/audio/platform-fall.mp3` | `"desert_platformFall"` |
-  | `win.mp3` | `assets/biomes/desert/audio/win.mp3` | `"desert_win"` |
-  | `music.mp3` | `assets/biomes/desert/audio/music.mp3` | `"desert_music"` |
-  | `boost.mp3` | `assets/biomes/desert/audio/boost.mp3` | `"desert_boost"` |
-  | `dot.mp3` | `assets/biomes/desert/audio/dot.mp3` | `"desert_dot"` |
-  | `checkpoint.mp3` | `assets/biomes/desert/audio/checkpoint.mp3` | `"desert_checkpoint"` |
-  | (optional) `chomp.mp3` | `assets/biomes/desert/audio/chomp.mp3` | `"desert_chomp"` |
-  | (optional) `cactus.mp3` | `assets/biomes/desert/audio/cactus.mp3` | `"desert_cactus"` |
-  | (optional) `scorpion.mp3` | `assets/biomes/desert/audio/scorpion.mp3` | `"desert_scorpion"` |
-  | (optional) `buzzard.mp3` | `assets/biomes/desert/audio/buzzard.mp3` | `"desert_buzzard"` |
-
-- **Fallbacks:** If `checkpoint.mp3` is missing (Cave), the dot sound is used. Desert: any slot without a file in `assets/biomes/desert/audio/` uses the Cave sound; if both are missing, no sound plays and the console shows which file is missing.
-- **Console:** When a sound would play but no file is available (Cave or Desert), a warning is logged: `[Dragon Lava Jump] Sound not available (missing file): <name>`. When a Desert override file fails to load at startup, a warning is logged: `[Dragon Lava Jump] Desert audio file missing (see .cursorrules for paths): <key>`.
-- **User gesture:** Audio may require a user click/tap before playing in some browsers.
-
----
-
-## Cheats
-
-- **Open:** Press **`** (backtick) or **~** to open the cheat code panel; on mobile/touch devices a **Cheats** button is shown in the menu (visible when `pointer: coarse` or viewport ≤768px). Close with **`** / **~** again or **Escape** or the × button.
-- **Usage:** Type a code and press Enter. Run the same code again to **toggle** the cheat off. Using any cheat (on or off) sets `cheatsUsedThisRun` so **scores are not saved** for that run (no `pushScoreForLevel` on win; win overlay shows "Cheats used — score not saved").
-- **Codes (lowercase, toggle on/off):**
-  - **orb** — Lava orb (replaces other power-ups). Run again to remove.
-  - **flame** — Fire totem (replaces other power-ups). Run again to remove.
-  - **chomp** — Chomp (Desert only; replaces other power-ups). Run again to remove.
-  - **god** — Invincibility: no death from hazards or enemies. Run again to turn off. When on, a gold border is drawn around the screen (fixed UI, `godModeBorder` graphics).
-  - **lives** — Infinite lives: lives reset to `LIVES_START` after each death. Run again to turn off.
-- **Implementation:** Scene flags `cheatsUsedThisRun`, `cheatInvincible`, `cheatInfiniteLives`. `applyCheat(code)` in `game-phaser.js`; cheat overlay and key handler in same file (DOM). Cheat flags are reset when a new level is loaded (scene create).
-
----
-
-## Technical Notes
+## Global rules
 
 - **No license:** This project is not licensed for reuse or distribution. Do not add license files or license sections.
-- **Constants:** Physics and layout constants are at the top of `game-phaser.js`. Desert-specific constants (e.g. `CACTUS_*`, `SCORPION_*`, `BUZZARD_*`) are with the biome section. Change them carefully.
+- **Constants:** Physics and layout constants are at the top of `game-phaser.js`; biome-specific ones live with the biome section. Change them carefully.
 - **Physics:** Arcade physics. Player hitbox is fixed; do not tie it to facing direction.
-- **Storage:** Levels and progress are saved in localStorage. Use keys `dragonLevels`, `dragonProfile`, `dragonAudio`, `dragonDifficulty`, `dragonBiome`.

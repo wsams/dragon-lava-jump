@@ -1325,7 +1325,7 @@
     this.load.audio("boost", "assets/audio/boost.mp3");
     this.load.audio("dot", "assets/audio/dot.mp3");
     this.load.audio("chomp", "assets/audio/chomp.mp3");
-    // Desert biome: optional overrides; same file names under assets/biomes/desert/audio/ (see .cursorrules)
+    // Desert biome: optional overrides; same file names under assets/biomes/desert/audio/ (see .agents/specs/biome-desert.md)
     var desertBase = "assets/biomes/desert/audio/";
     this.load.audio("desert_jump", desertBase + "jump.mp3");
     this.load.audio("desert_death", desertBase + "death.mp3");
@@ -1342,7 +1342,7 @@
     this.load.audio("desert_chomp", desertBase + "chomp.mp3");
     this.load.on("loaderror", function (file) {
       if (file && file.key && file.key.indexOf("desert_") === 0) {
-        console.warn("[Dragon Lava Jump] Desert audio file missing (see .cursorrules for paths):", file.key);
+        console.warn("[Dragon Lava Jump] Desert audio file missing (see .agents/specs/biome-desert.md for paths):", file.key);
       }
     });
   };
@@ -1856,7 +1856,7 @@
     this.godModeBorder.setVisible(false);
   };
 
-  // Play SFX or log to console when file is missing (see .cursorrules for required files)
+  // Play SFX or log to console when file is missing (see .agents/specs/biome-cave.md and biome-desert.md for required files)
   GameScene.prototype.playSfx = function (soundRef, nameForLog, playOptions) {
     if (soundRef && isSfxEnabled()) {
       if (playOptions != null) soundRef.play(playOptions);
