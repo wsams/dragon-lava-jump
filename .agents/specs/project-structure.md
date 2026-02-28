@@ -4,9 +4,9 @@
 
 ## Summary
 
-- **Main logic:** `dragonlavajump-js/game-phaser.js` — single script, no ES modules. Runs from `file://` or a simple static server.
+- **Main logic:** `js/game-phaser.js` — single script, no ES modules. Runs from `file://` or a simple static server.
 - **Engine:** Phaser 3 with Arcade physics.
-- **Entry point:** `dragonlavajump.html` loads the game; `dragonlavajump-css/styles.css` handles layout.
+- **Entry point:** `dragonlavajump.html` loads the game; `css/styles.css` handles layout.
 - **Assets:** Shared audio in `assets/audio/`. Biome-specific assets (e.g. Desert) under `assets/biomes/<biomeId>/` (e.g. `assets/biomes/desert/audio/`) so they do not clash with other biomes.
 - **Legacy:** Code in `legacy/` is kept for reference. Do not rely on it for current behavior.
 

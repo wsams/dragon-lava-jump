@@ -14,8 +14,8 @@
 
 ## Project
 
-- **Game logic:** `dragonlavajump-js/game-phaser.js` (single script, no ES modules). Phaser 3, Arcade physics. Runs from `file://` or a static server.
-- **Entry:** `dragonlavajump.html` + `dragonlavajump-css/styles.css`.
+- **Game logic:** `js/game-phaser.js` (single script, no ES modules). Phaser 3, Arcade physics. Runs from `file://` or a static server.
+- **Entry:** `dragonlavajump.html` + `css/styles.css`.
 - **Assets:** `assets/audio/` for shared audio; `assets/biomes/<biomeId>/` for biome-specific assets (e.g. `assets/biomes/desert/audio/`).
 - **Legacy:** `legacy/` is reference only; do not rely on it for current behavior.
 
