@@ -606,6 +606,7 @@
   var SCORPION_H = 14;
   var SCORPION_SPEED = 45;
   var SCORPION_PATROL_MARGIN = 30;
+  var SCORPION_STEP_INTERVAL = 0.32;  // seconds between walk sounds
   var BUZZARD_W = 26;
   var BUZZARD_H = 18;
   var BUZZARD_MAX_SPEED = 2.0 * REFERENCE_FPS;
@@ -1341,6 +1342,8 @@
     this.load.audio("desert_checkpoint", desertBase + "checkpoint.mp3");
     this.load.audio("desert_chomp", desertBase + "chomp.mp3");
     this.load.audio("desert_cactus", desertBase + "cactus.mp3");
+    this.load.audio("desert_scorpion", desertBase + "scorpion.mp3");
+    this.load.audio("desert_buzzard", desertBase + "buzzard.mp3");
     this.load.on("loaderror", function (file) {
       if (file && file.key && file.key.indexOf("desert_") === 0) {
         console.warn("[Dragon Lava Jump] Desert audio file missing (see .agents/specs/biome-desert.md for paths):", file.key);
@@ -1468,6 +1471,8 @@
     this.checkpointSound = this.cache.audio.exists(keyCheckpoint) ? this.sound.add(keyCheckpoint, { volume: 0.7 }) : (this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.7 }) : null);
     this.chompSound = this.cache.audio.exists(keyChomp) ? this.sound.add(keyChomp, { volume: 0.6 }) : null;
     this.cactusSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_cactus")) ? this.sound.add("desert_cactus", { volume: 0.7 }) : null;
+    this.scorpionSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_scorpion")) ? this.sound.add("desert_scorpion", { volume: 0.5 }) : null;
+    this.buzzardSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_buzzard")) ? this.sound.add("desert_buzzard", { volume: 0.5 }) : null;
     this.music = null;
     if (this.cache.audio.exists(keyMusic)) {
       // Ensure only one biome music track plays at a time across scene switches.
@@ -1729,6 +1734,7 @@
         scorp.setData("right", sdef.right);
         scorp.setData("direction", sdef.direction);
         scorp.setData("defIndex", sci);
+        scorp.setData("stepTimer", Math.random() * SCORPION_STEP_INTERVAL);  // stagger walk sounds
         this.scorpions.push(scorp);
       }
       // Buzzards (fly like bats)
@@ -2329,6 +2335,7 @@
   GameScene.prototype.killScorpion = function (scorp) {
     if (scorp.getData("dead")) return;
     scorp.setData("dead", true);
+    this.playSfx(this.scorpionSound, "scorpion");
     this.addScore(POINTS_KILL);
     if (scorp.body) scorp.body.checkCollision.none = true;
     this.tweens.add({
@@ -2346,6 +2353,7 @@
   GameScene.prototype.killBuzzard = function (buzz) {
     if (buzz.getData("dead")) return;
     buzz.setData("dead", true);
+    this.playSfx(this.buzzardSound, "buzzard");
     this.addScore(POINTS_KILL);
     if (buzz.body) buzz.body.checkCollision.none = true;
     var parts = null;
@@ -2593,6 +2601,7 @@
         }
         var splat = this.platformsData[sdef.platformIndex];
         if (splat) scorp.y = splat.y - SCORPION_H / 2;
+        scorp.setData("stepTimer", Math.random() * SCORPION_STEP_INTERVAL);
         scorp.body.updateFromGameObject();
       }
       // Reset buzzards to initial positions
@@ -3192,7 +3201,7 @@
       cInfo.eye2.y = cb.y - 3;
     }
     } else if (this.biomeId === "desert") {
-      // Scorpions: patrol back and forth
+      // Scorpions: patrol back and forth; play step sound at interval (proximity-based)
       for (var sci = 0; sci < this.scorpions.length; sci++) {
         var scorp = this.scorpions[sci];
         if (scorp.getData("dead")) continue;
@@ -3203,6 +3212,13 @@
         if (scorp.x <= left) { scorp.x = left; scorp.setData("direction", 1); }
         if (scorp.x >= right) { scorp.x = right; scorp.setData("direction", -1); }
         scorp.body.updateFromGameObject();
+        var stepTimer = (scorp.getData("stepTimer") || 0) + dt;
+        if (stepTimer >= SCORPION_STEP_INTERVAL) {
+          stepTimer = 0;
+          var pv = this.getProximityVolume(scorp.x, scorp.y);
+          if (pv > 0.06) this.playSfx(this.scorpionSound, "scorpion", { volume: 0.4 * pv });
+        }
+        scorp.setData("stepTimer", stepTimer);
       }
       // Buzzards: wander like bats
       var buzzXMin = 50 + BUZZARD_W / 2, buzzXMax = LEVEL_LENGTH - 50 - BUZZARD_W / 2;
