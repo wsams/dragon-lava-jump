@@ -44,7 +44,8 @@ Open `dragonlavajump.html` in a browser, or serve the project folder with any st
 - Biomes
   - Desert
     - **Audio**
-      - music.mp3 (Music by [Vlad Krotov](https://pixabay.com/users/moodmode-33139253/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428) from [Pixabay](https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428)
+      - music.mp3 (Music by [Vlad Krotov](https://pixabay.com/users/moodmode-33139253/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428) from [Pixabay](https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428))
+      - chomp.mp3 (Sound Effect by [freesound_community](https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=92106) from [Pixabay](https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=92106))
 - **Images**
   - dragon.ico (https://icon-icons.com/icon/dragon-face/98751 - Dragon face - Free Icon in PNG and SVG By Google)
 
