@@ -1340,6 +1340,7 @@
     this.load.audio("desert_dot", desertBase + "dot.mp3");
     this.load.audio("desert_checkpoint", desertBase + "checkpoint.mp3");
     this.load.audio("desert_chomp", desertBase + "chomp.mp3");
+    this.load.audio("desert_cactus", desertBase + "cactus.mp3");
     this.load.on("loaderror", function (file) {
       if (file && file.key && file.key.indexOf("desert_") === 0) {
         console.warn("[Dragon Lava Jump] Desert audio file missing (see .agents/specs/biome-desert.md for paths):", file.key);
@@ -1407,6 +1408,7 @@
     this.winHoldTimer = 0;
     this.isDyingInLava = false;
     this.lavaDeathTimer = 0;
+    this.cactusDeathDelay = 0;  // brief delay so cactus/cactus-death sound can play before respawn
     this.lavaBounceTimer = 0;
     this.lavaBounceItemCollected = false;
     this.lavaBounceBounces = 0;  // lava touches this run (reset on platform land)
@@ -1465,6 +1467,7 @@
     this.dotSound = this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.8 }) : null;
     this.checkpointSound = this.cache.audio.exists(keyCheckpoint) ? this.sound.add(keyCheckpoint, { volume: 0.7 }) : (this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.7 }) : null);
     this.chompSound = this.cache.audio.exists(keyChomp) ? this.sound.add(keyChomp, { volume: 0.6 }) : null;
+    this.cactusSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_cactus")) ? this.sound.add("desert_cactus", { volume: 0.7 }) : null;
     this.music = null;
     if (this.cache.audio.exists(keyMusic)) {
       // Ensure only one biome music track plays at a time across scene switches.
@@ -2153,9 +2156,10 @@
   };
 
   GameScene.prototype.onOverlapCactus = function (player, hitbox) {
+    if (this.cactusDeathDelay > 0) return;  // already in cactus-death delay
     if (this.chompCollected) {
       this.chompCollected = false;
-      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.playSfx(this.shieldLossSound, "shieldLoss");
       // Bounce player back a short distance from the cactus (hurt but no death)
       var dx = this.player.x - hitbox.x;
       var dy = this.player.y - hitbox.y;
@@ -2164,7 +2168,9 @@
       this.player.body.setVelocity((dx / len) * bounceSpeed, (dy / len) * bounceSpeed);
       return;
     }
-    this.applyDeath();
+    // Play cactus hurt sound if available, else death; then short delay so sound can play before respawn
+    if (this.cactusSound) this.playSfx(this.cactusSound, "cactus"); else this.playSfx(this.deathSound, "death");
+    this.cactusDeathDelay = 0.45;
   };
 
   GameScene.prototype.onOverlapScorpion = function (player, scorp) {
@@ -2362,9 +2368,9 @@
     });
   };
 
-  GameScene.prototype.applyDeath = function () {
+  GameScene.prototype.applyDeath = function (skipDeathSound) {
     if (this.cheatInvincible) return;
-    if (!this.isDyingInLava) this.playSfx(this.deathSound, "death");
+    if (!skipDeathSound && !this.isDyingInLava) this.playSfx(this.deathSound, "death");
     this.lives--;
     if (this.cheatInfiniteLives) this.lives = LIVES_START;
     if (this.lives <= 0) {
@@ -2659,6 +2665,7 @@
     this.winHoldTimer = 0;
     this.isDyingInLava = false;
     this.lavaDeathTimer = 0;
+    this.cactusDeathDelay = 0;
   };
 
   // 0 = too far to hear, 1 = at player; used for distance-based SFX volume
@@ -2777,6 +2784,25 @@
           this.winSequenceState = "done";
           this.showWinOverlay(true);
         }
+      }
+      return;
+    }
+
+    if (this.cactusDeathDelay > 0) {
+      this.cactusDeathDelay -= dt;  // dt is already in seconds (delta/1000 at top of update)
+      this.player.body.setVelocity(0, 0);
+      var hurtFlash = Math.sin((0.45 - this.cactusDeathDelay) * 24) > 0;
+      var hurtColor = hurtFlash ? 0xcc2222 : 0x4a9b4a;
+      this.player.fillColor = hurtColor;
+      this.playerHead.fillColor = hurtColor;
+      if (this.playerHead) this.playerHead.setVisible(true);
+      if (this.playerUpperJaw) this.playerUpperJaw.setVisible(false);
+      if (this.playerLowerJaw) this.playerLowerJaw.setVisible(false);
+      if (this.chompTooth1) this.chompTooth1.setVisible(false);
+      if (this.chompTooth2) this.chompTooth2.setVisible(false);
+      if (this.cactusDeathDelay <= 0) {
+        this.cactusDeathDelay = 0;
+        this.applyDeath(true);
       }
       return;
     }
