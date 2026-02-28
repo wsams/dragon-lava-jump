@@ -1467,6 +1467,14 @@
     this.chompSound = this.cache.audio.exists(keyChomp) ? this.sound.add(keyChomp, { volume: 0.6 }) : null;
     this.music = null;
     if (this.cache.audio.exists(keyMusic)) {
+      // Ensure only one biome music track plays at a time across scene switches.
+      var globalMusic = window.__dragonCurrentMusic || null;
+      if (globalMusic && globalMusic.stop && globalMusic.key !== keyMusic) {
+        try {
+          globalMusic.stop();
+        } catch (e) {}
+      }
+
       var existingMusic = (typeof this.sound.get === "function") ? this.sound.get(keyMusic) : null;
       if (existingMusic) {
         this.music = existingMusic;
@@ -1478,6 +1486,9 @@
         this.music = this.sound.add(keyMusic, { volume: 0.35, loop: true });
         if (isMusicEnabled()) this.music.play();
         else this.music.setMute(true);
+      }
+      if (this.music) {
+        window.__dragonCurrentMusic = this.music;
       }
     }
 
