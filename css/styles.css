@@ -269,23 +269,63 @@ select, #menu button {
   border-radius: 12px;
   padding: 24px 32px;
   min-width: 280px;
-  max-width: 90vw;
-  max-height: 70vh;
+  max-width: min(520px, 92vw);
+  max-height: min(78vh, 640px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 .instructions-title {
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   font-size: 22px;
   color: #ffd93d;
+  flex-shrink: 0;
+}
+.instructions-intro {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: #c4b8c8;
+  line-height: 1.45;
+  flex-shrink: 0;
 }
 .instructions-content {
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 8px;
+  margin-right: -4px;
   font-size: 14px;
   color: #e8e0e0;
   line-height: 1.5;
+}
+.instructions-section {
+  margin-bottom: 16px;
+}
+.instructions-section:last-child {
+  margin-bottom: 0;
+}
+.instructions-heading {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fbbf24;
+  letter-spacing: 0.02em;
+}
+.instructions-list {
+  margin: 0;
+  padding-left: 1.15em;
+}
+.instructions-list li {
+  margin-bottom: 6px;
+}
+.instructions-list li:last-child {
+  margin-bottom: 0;
+}
+.instructions-p {
+  margin: 0;
 }
 .instructions-content p {
   margin: 0 0 12px 0;
@@ -299,6 +339,36 @@ select, #menu button {
 }
 .instructions-content a:hover {
   text-decoration: underline;
+}
+
+/* Instructions: tailored to active level biome (class on #instructionsContentRoot) */
+.instructions-content.instructions-context-default .instructions-biome--desert,
+.instructions-content.instructions-context-default .instructions-biome--ocean,
+.instructions-content.instructions-context-desert .instructions-biome--cave,
+.instructions-content.instructions-context-desert .instructions-biome--ocean,
+.instructions-content.instructions-context-ocean .instructions-biome--cave,
+.instructions-content.instructions-context-ocean .instructions-biome--desert {
+  display: none;
+}
+.instructions-content:not(.instructions-context-ocean) .instructions-keyboard-oceanboost {
+  display: none;
+}
+.instructions-content.instructions-context-ocean .instructions-keyboard-fire {
+  display: none;
+}
+.instructions-content.instructions-context-ocean .instructions-goal-lava {
+  display: none;
+}
+.instructions-content:not(.instructions-context-ocean) .instructions-goal-ocean {
+  display: none;
+}
+.instructions-content.instructions-context-default .instructions-pu--desert,
+.instructions-content.instructions-context-default .instructions-pu--ocean,
+.instructions-content.instructions-context-desert .instructions-pu--cave,
+.instructions-content.instructions-context-desert .instructions-pu--ocean,
+.instructions-content.instructions-context-ocean .instructions-pu--cave,
+.instructions-content.instructions-context-ocean .instructions-pu--desert {
+  display: none;
 }
 
 #cheatOverlay {

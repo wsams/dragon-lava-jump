@@ -14,7 +14,7 @@
 - **New level:** Button to start a new random level (uses selected biome).
 - **Restart:** Button to restart the current level from the beginning (same as Replay; useful e.g. when stuck in lava with god mode). Hides win overlay and calls `startOrRestartGame()` so the same level reloads.
 - **Share:** Button to share the current level (seed/difficulty and biome when desert).
-- **Instructions:** Menu button opens the "How to play" overlay (see [Instructions and Controls](instructions-and-controls.md)).
+- **Instructions:** Menu button opens the "How to play" overlay — **scrollable** panel, **sectioned** copy (keyboard, goal, per-biome notes), not one unstructured paragraph (see [Instructions and Controls](instructions-and-controls.md)).
 - **Sandbox direction:** The game may evolve toward a sandbox/creative-style environment (e.g. Minecraft-style creative within a level world system). Restart and cheats support this use case.
 
 ## Menu Header (Dark Mode)

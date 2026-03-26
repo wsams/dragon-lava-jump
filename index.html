@@ -61,9 +61,55 @@
         <div class="instructions-panel">
           <button type="button" id="instructionsCloseBtn" class="win-close" aria-label="Close">×</button>
           <h2 class="instructions-title">How to play</h2>
-          <div class="instructions-content">
-            <p><b>Controls:</b> ← → Move &nbsp;|&nbsp; ↓ = Slam down (in air) &nbsp;|&nbsp; Space = Jump (double jump in air) &nbsp;|&nbsp; F = Boost (once per jump, in air) &nbsp;|&nbsp; G = Fire breath &nbsp;• &nbsp; Or use the onscreen controls.</p>
-            <p><b>Goal:</b> Reach the golden pillar. Collect all 30 dots. Avoid lava (death). <b>Cave:</b> Don't touch slimes, bats, crawlers, or stalactites (reset). <b>Desert:</b> Don't touch cacti, scorpions, buzzards, or flying needles (reset). Touch poles to set checkpoints; collect the orange orb for lava bounces, the fire totem for one flame (G), or the chomp (teeth)—face creatures to chomp them; from behind or cactus you lose chomp but survive once. Only one power-up at a time. Some platforms (Cave) drop after you stand on them.</p>
+          <p id="instructionsIntro" class="instructions-intro">Loading…</p>
+          <div id="instructionsContentRoot" class="instructions-content instructions-context-default" tabindex="0">
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Keyboard</h3>
+              <ul class="instructions-list">
+                <li><strong>← →</strong> or <strong>A D</strong> — Move</li>
+                <li><strong>↓</strong> or <strong>S</strong> — Slam down (while in the air)</li>
+                <li><strong>Space</strong> / <strong>W</strong> / <strong>↑</strong> — Jump; second press in air = double jump (where allowed)</li>
+                <li class="instructions-keyboard-airboost"><strong>F</strong> — In the air: one <strong>forward boost</strong> per jump (after a short air time).</li>
+                <li class="instructions-keyboard-oceanboost"><strong>F</strong> — Underwater: <strong>swim burst</strong> forward (short cooldown; same key as air boost).</li>
+                <li class="instructions-keyboard-fire"><strong>G</strong> — Fire breath when you have it (not in Ocean).</li>
+              </ul>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Touch</h3>
+              <p class="instructions-p">On-screen buttons match the actions above (move, slam, jump, boost, breath). Icons only — no text on buttons.</p>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Goal</h3>
+              <ul class="instructions-list">
+                <li>Reach the <strong>golden goal</strong> pillar.</li>
+                <li>Collect all <strong>30 dots</strong> (pink).</li>
+                <li class="instructions-goal-lava"><strong>Lava</strong> at the bottom kills you unless you have a lava-bounce pickup.</li>
+                <li class="instructions-goal-ocean">No lava — watch your <strong>breath</strong>, <strong>vents</strong>, and enemies instead.</li>
+                <li><strong>Checkpoints</strong> — Touch flag poles to respawn from there after a death.</li>
+              </ul>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--cave">
+              <h3 class="instructions-heading">This level — Cave hazards</h3>
+              <p class="instructions-p">Avoid <strong>slimes</strong>, <strong>bats</strong>, <strong>crawlers</strong>, and <strong>stalactites</strong>. Some platforms may <strong>drop</strong> after you stand on them.</p>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--desert">
+              <h3 class="instructions-heading">This level — Desert hazards</h3>
+              <p class="instructions-p">Avoid <strong>cacti</strong>, <strong>scorpions</strong>, <strong>buzzards</strong>, and <strong>flying needles</strong>. <strong>Chomp</strong> (teeth pickup): face enemies to eat them; from behind or cactus you lose chomp but survive once.</p>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--ocean">
+              <h3 class="instructions-heading">This level — Ocean hazards</h3>
+              <ul class="instructions-list">
+                <li><strong>Swim</strong> underwater; <strong>breath meter</strong> — surface or use <strong>air canisters</strong>. No lava orb.</li>
+                <li><strong>Bubble columns</strong> pull you inward and down (black-hole style); <strong>floor holes</strong> are as wide as the column — death after the full pull-in animation.</li>
+                <li><strong>Seagulls</strong> if you surface for air; <strong>barracudas</strong>, <strong>jellyfish</strong>, <strong>urchins</strong> underwater.</li>
+              </ul>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Power-ups (this biome)</h3>
+              <p class="instructions-p instructions-pu instructions-pu--cave">Only <strong>one</strong> at a time: <strong>orange orb</strong> — lava bounces; <strong>fire totem</strong> — one flame (G).</p>
+              <p class="instructions-p instructions-pu instructions-pu--desert">Only <strong>one</strong> at a time: <strong>orb</strong>, <strong>fire totem</strong>, or <strong>chomp</strong> (teeth) — Desert-only chomp lets you eat enemies from the front.</p>
+              <p class="instructions-p instructions-pu instructions-pu--ocean"><strong>Air canisters</strong> — no lava orb; no fire totem / G breath in Ocean.</p>
+            </section>
           </div>
         </div>
       </div>
@@ -105,6 +151,6 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
-  <script src="js/main.min.js"></script>
+  <script src="js/game-phaser.js"></script>
 </body>
 </html>
