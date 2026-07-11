@@ -2,6 +2,13 @@
 
 All notable changes to Dragon Lava Jump are documented here.
 
+# [1.2.0](https://github.com/wsams/dragon-lava-jump/compare/v1.1.1...v1.2.0) (2026-07-11)
+
+
+### Features
+
+* Show game in README ([3392669](https://github.com/wsams/dragon-lava-jump/commit/33926695762c66d95f8f220a49416609935116bf))
+
 ## [1.1.1](https://github.com/wsams/dragon-lava-jump/compare/v1.1.0...v1.1.1) (2026-07-11)
 
 
