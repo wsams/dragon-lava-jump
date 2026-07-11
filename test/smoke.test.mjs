@@ -33,6 +33,24 @@ assert.match(
   "index.html should load the game script"
 );
 assert.match(html, /css\/styles\.css/, "index.html should load css/styles.css");
+assert.match(
+  html,
+  /href="https:\/\/github\.com\/wsams\/dragon-lava-jump"/,
+  "index.html footer should link back to the GitHub repo"
+);
+assert.match(html, /View on GitHub/, "index.html should label the repo link");
+
+const readme = readFileSync(join(root, "README.md"), "utf8");
+assert.match(
+  readme,
+  /wsams\.github\.io\/dragon-lava-jump/,
+  "README should link to the GitHub Pages play URL"
+);
+assert.match(
+  readme,
+  /img\.shields\.io\/badge\/Play_now/,
+  "README should include a Play now badge"
+);
 
 const game = readFileSync(join(root, "js/game-phaser.js"), "utf8");
 assert.match(game, /function detectBackend\s*\(/, "game should detect optional backend");
