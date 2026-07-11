@@ -2,6 +2,13 @@
 
 All notable changes to Dragon Lava Jump are documented here.
 
+## [1.1.1](https://github.com/wsams/dragon-lava-jump/compare/v1.1.0...v1.1.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* clarify GitHub Pages enablement so deploy can succeed ([#6](https://github.com/wsams/dragon-lava-jump/issues/6)) ([389a87d](https://github.com/wsams/dragon-lava-jump/commit/389a87d968764664cf81ff971206e43dd569b911))
+
 # [1.1.0](https://github.com/wsams/dragon-lava-jump/compare/v1.0.0...v1.1.0) (2026-07-11)
 
 
