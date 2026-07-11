@@ -12,7 +12,17 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 
 ## How to run
 
-Open `dragonlavajump.html` in a browser, or serve the project folder with any static file server (e.g. `npx serve .` or `python -m http.server`) and open the page. Audio may require a user gesture (e.g. click or tap) before playing in some browsers.
+Open `index.html` in a browser, or serve the project folder with any static file server (e.g. `npx serve .` or `python -m http.server`) and open the page. Audio may require a user gesture (e.g. click or tap) before playing in some browsers.
+
+No PHP or other server backend is required. On load the game probes for an optional API (`api/health` / `api/health.php`). If none responds — including on **GitHub Pages** and other static hosts — it runs in **local mode** and stores profile, scores, levels, audio, difficulty, and biome in `localStorage` so the game is fully playable on a plain web server. Force local mode with `?backend=local`.
+
+### GitHub Pages
+
+A workflow (`.github/workflows/pages.yml`) deploys the static site on every push to `main`. After Pages is enabled for the repo (Settings → Pages → Source: GitHub Actions), the game is available at:
+
+`https://wsams.github.io/dragon-lava-jump/`
+
+Scores and progress on Pages are per-browser (localStorage), not shared across devices.
 
 ## Controls
 
