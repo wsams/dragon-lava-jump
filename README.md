@@ -1,6 +1,10 @@
 # Dragon Lava Jump
 
+[![Play now — leap the lava!](https://img.shields.io/badge/Play_now-Leap_the_lava!-e85d04?style=for-the-badge&labelColor=1a1a2e)](https://wsams.github.io/dragon-lava-jump/)
+
 A side-scrolling platformer in which you guide a dragon across platforms, over lava, past enemies, and to the golden door. Built with **HTML**, **CSS**, **JavaScript**, and **Phaser 3**.
+
+**[Play in your browser →](https://wsams.github.io/dragon-lava-jump/)** — no install, just jump in and chase that golden door.
 
 ## About the game
 
@@ -8,11 +12,21 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 - **Movement:** Run left/right, jump (including double jump in mid-air), slam down (hold Down/S in the air to drop fast), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
 - **Hazards:** Lava (instant death unless you have a lava bounce), slimes, bats, crawlers, and stalactites. Checkpoints and extra lives help you progress.
 - **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem; Desert also has the chomp power-up).
-- **Instructions:** The menu **Instructions** button opens a dialog with “How to play”—keyboard and on-screen controls, goal, and biome-specific hazards. The page footer shows only the repo and Phaser acknowledgements.
+- **Instructions:** The menu **Instructions** button opens a dialog with “How to play”—keyboard and on-screen controls, goal, and biome-specific hazards. The page footer links back to this GitHub repo and credits Phaser.
 
 ## How to run
 
-Open `dragonlavajump.html` in a browser, or serve the project folder with any static file server (e.g. `npx serve .` or `python -m http.server`) and open the page. Audio may require a user gesture (e.g. click or tap) before playing in some browsers.
+Open `index.html` in a browser, or serve the project folder with any static file server (e.g. `npx serve .` or `python -m http.server`) and open the page. Audio may require a user gesture (e.g. click or tap) before playing in some browsers.
+
+No PHP or other server backend is required. On load the game probes for an optional API (`api/health` / `api/health.php`). If none responds — including on **GitHub Pages** and other static hosts — it runs in **local mode** and stores profile, scores, levels, audio, difficulty, and biome in `localStorage` so the game is fully playable on a plain web server. Force local mode with `?backend=local`.
+
+### GitHub Pages
+
+A workflow (`.github/workflows/pages.yml`) deploys the static site on every push to `main`. After Pages is enabled for the repo (Settings → Pages → Source: GitHub Actions), the game is available at:
+
+`https://wsams.github.io/dragon-lava-jump/`
+
+Scores and progress on Pages are per-browser (localStorage), not shared across devices.
 
 ## Controls
 

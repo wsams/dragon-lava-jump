@@ -18,6 +18,8 @@ const requiredFiles = [
   "css/styles.css",
   "js/game-phaser.js",
   "dragon.ico",
+  ".github/workflows/pages.yml",
+  ".nojekyll",
 ];
 
 for (const file of requiredFiles) {
@@ -31,6 +33,53 @@ assert.match(
   "index.html should load the game script"
 );
 assert.match(html, /css\/styles\.css/, "index.html should load css/styles.css");
+assert.match(
+  html,
+  /href="https:\/\/github\.com\/wsams\/dragon-lava-jump"/,
+  "index.html footer should link back to the GitHub repo"
+);
+assert.match(html, /View on GitHub/, "index.html should label the repo link");
+
+const readme = readFileSync(join(root, "README.md"), "utf8");
+assert.match(
+  readme,
+  /wsams\.github\.io\/dragon-lava-jump/,
+  "README should link to the GitHub Pages play URL"
+);
+assert.match(
+  readme,
+  /img\.shields\.io\/badge\/Play_now/,
+  "README should include a Play now badge"
+);
+
+const game = readFileSync(join(root, "js/game-phaser.js"), "utf8");
+assert.match(game, /function detectBackend\s*\(/, "game should detect optional backend");
+assert.match(game, /function storageGet\s*\(/, "game should use storageGet for persistence");
+assert.match(game, /function storageSet\s*\(/, "game should use storageSet for persistence");
+assert.match(game, /BACKEND_MODE_LOCAL/, "game should define local backend mode");
+assert.match(game, /api\/health\.php/, "game should probe PHP health endpoint");
+assert.match(game, /detectBackend\(\)\.then/, "init should wait for backend detection");
+assert.match(game, /localStorage\.getItem/, "storageGet should read localStorage");
+assert.match(game, /localStorage\.setItem/, "storageSet should write localStorage");
+// Persistence helpers should be the only writers; feature code uses storageGet/storageSet.
+assert.equal(
+  (game.match(/localStorage\.setItem/g) || []).length,
+  1,
+  "only storageSet should call localStorage.setItem"
+);
+assert.equal(
+  (game.match(/localStorage\.getItem/g) || []).length,
+  1,
+  "only storageGet should call localStorage.getItem"
+);
+
+const pagesWorkflow = readFileSync(
+  join(root, ".github/workflows/pages.yml"),
+  "utf8"
+);
+assert.match(pagesWorkflow, /actions\/deploy-pages/, "pages workflow should deploy to Pages");
+assert.match(pagesWorkflow, /upload-pages-artifact/, "pages workflow should upload artifact");
+assert.match(pagesWorkflow, /_site/, "pages workflow should assemble _site");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 assert.equal(pkg.name, "dragon-lava-jump");
@@ -48,5 +97,8 @@ assert.equal(
   `minify failed:\n${minify.stdout}\n${minify.stderr}`
 );
 assertFile("js/main.min.js");
+
+const minified = readFileSync(join(root, "js/main.min.js"), "utf8");
+assert.match(minified, /__dragonBackendMode/, "minified build should expose backend mode");
 
 console.log("smoke tests passed");

@@ -438,6 +438,13 @@ select, #menu button {
 #page-footer a:hover {
   text-decoration: underline;
 }
+#page-footer a.footer-repo {
+  font-weight: 600;
+  color: #fbbf24;
+}
+#page-footer a.footer-repo:hover {
+  color: #fcd34d;
+}
 
 #onscreen-controls {
   display: flex;

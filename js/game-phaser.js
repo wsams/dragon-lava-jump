@@ -626,12 +626,131 @@
     return { cx: p.x, cy: p.y + th - f * th };
   }
 
+  // --- Backend detection (optional PHP/API) + localStorage fallback
+  // GitHub Pages and other static hosts have no PHP. Probe for an optional API;
+  // when none responds, persist everything in localStorage so the game is fully playable offline.
+  var BACKEND_MODE_LOCAL = "local";
+  var BACKEND_MODE_REMOTE = "remote";
+  var BACKEND_PROBE_PATHS = ["api/health", "api/health.php"];
+  var BACKEND_PROBE_TIMEOUT_MS = 1500;
+  var backendMode = BACKEND_MODE_LOCAL;
+  window.__dragonBackendMode = backendMode;
+
+  function isRemoteBackend() {
+    return backendMode === BACKEND_MODE_REMOTE;
+  }
+
+  function setBackendMode(mode) {
+    backendMode = mode === BACKEND_MODE_REMOTE ? BACKEND_MODE_REMOTE : BACKEND_MODE_LOCAL;
+    window.__dragonBackendMode = backendMode;
+  }
+
+  /** Resolve a path relative to this page (works under GitHub Pages project URLs). */
+  function resolveAppUrl(path) {
+    try {
+      return new URL(path, window.location.href).toString();
+    } catch (e) {
+      return path;
+    }
+  }
+
+  function storageGet(key) {
+    // Remote API persistence can be wired here later; static/Pages mode always uses localStorage.
+    if (isRemoteBackend()) {
+      // No remote storage client yet — fall through to local until an API is implemented.
+    }
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function storageSet(key, value) {
+    if (isRemoteBackend()) {
+      // No remote storage client yet — fall through to local until an API is implemented.
+    }
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      // ignore quota / private-mode errors
+    }
+  }
+
+  function probeBackendPath(path) {
+    if (typeof fetch !== "function") {
+      return Promise.resolve(false);
+    }
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = null;
+    var opts = {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin"
+    };
+    if (controller) {
+      opts.signal = controller.signal;
+      timer = setTimeout(function () {
+        try { controller.abort(); } catch (e) {}
+      }, BACKEND_PROBE_TIMEOUT_MS);
+    }
+    return fetch(resolveAppUrl(path), opts)
+      .then(function (res) {
+        if (!res || !res.ok) return false;
+        var ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
+        if (ct.indexOf("application/json") !== -1) {
+          return res.json().then(function (body) {
+            return !!(body && (body.ok === true || body.status === "ok"));
+          }).catch(function () { return true; });
+        }
+        return true;
+      })
+      .catch(function () { return false; })
+      .then(function (ok) {
+        if (timer) clearTimeout(timer);
+        return ok;
+      });
+  }
+
+  /**
+   * Detect optional server backend. Resolves with "local" or "remote".
+   * On static hosts (e.g. GitHub Pages) probes fail and localStorage mode is used.
+   */
+  function detectBackend() {
+    var force = null;
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      force = params.get("backend");
+    } catch (e) {}
+    if (force === "local" || force === "offline") {
+      setBackendMode(BACKEND_MODE_LOCAL);
+      return Promise.resolve(BACKEND_MODE_LOCAL);
+    }
+    if (force === "remote" || force === "api") {
+      setBackendMode(BACKEND_MODE_REMOTE);
+      return Promise.resolve(BACKEND_MODE_REMOTE);
+    }
+    var chain = Promise.resolve(false);
+    for (var i = 0; i < BACKEND_PROBE_PATHS.length; i++) {
+      (function (path) {
+        chain = chain.then(function (found) {
+          if (found) return true;
+          return probeBackendPath(path);
+        });
+      })(BACKEND_PROBE_PATHS[i]);
+    }
+    return chain.then(function (found) {
+      setBackendMode(found ? BACKEND_MODE_REMOTE : BACKEND_MODE_LOCAL);
+      return backendMode;
+    });
+  }
+
   // --- Biomes: abstract level generation and entities per biome
   var BIOME_STORAGE_KEY = "dragonBiome";
 
   function getSelectedBiomeId() {
     try {
-      var v = localStorage.getItem(BIOME_STORAGE_KEY);
+      var v = storageGet(BIOME_STORAGE_KEY);
       if (v === "desert" || v === "default" || v === "ocean") return v;
     } catch (e) {}
     return "default";
@@ -639,7 +758,7 @@
 
   function setSelectedBiomeId(id) {
     try {
-      if (id === "desert" || id === "default" || id === "ocean") localStorage.setItem(BIOME_STORAGE_KEY, id);
+      if (id === "desert" || id === "default" || id === "ocean") storageSet(BIOME_STORAGE_KEY, id);
     } catch (e) {}
   }
 
@@ -1168,7 +1287,7 @@
 
   function loadProfile() {
     try {
-      var raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+      var raw = storageGet(PROFILE_STORAGE_KEY);
       if (!raw) return { username: "", runs: [] };
       var data = JSON.parse(raw);
       if (!data || typeof data !== "object") return { username: "", runs: [] };
@@ -1182,7 +1301,7 @@
 
   function saveProfile(profile) {
     try {
-      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+      storageSet(PROFILE_STORAGE_KEY, JSON.stringify(profile));
     } catch (e) {
       // ignore storage errors in local/offline mode
     }
@@ -1200,7 +1319,7 @@
 
   function loadScores() {
     try {
-      var raw = localStorage.getItem(SCORES_STORAGE_KEY);
+      var raw = storageGet(SCORES_STORAGE_KEY);
       if (!raw) return {};
       var data = JSON.parse(raw);
       return data && typeof data === "object" ? data : {};
@@ -1211,7 +1330,7 @@
 
   function saveScores(data) {
     try {
-      localStorage.setItem(SCORES_STORAGE_KEY, JSON.stringify(data));
+      storageSet(SCORES_STORAGE_KEY, JSON.stringify(data));
     } catch (e) {}
   }
 
@@ -1274,7 +1393,7 @@
   // --- Audio settings (SFX / music toggles)
   function loadAudioSettings() {
     try {
-      var raw = localStorage.getItem(AUDIO_STORAGE_KEY);
+      var raw = storageGet(AUDIO_STORAGE_KEY);
       if (!raw) return { sfx: true, music: true };
       var data = JSON.parse(raw);
       if (!data || typeof data !== "object") return { sfx: true, music: true };
@@ -1288,7 +1407,7 @@
 
   function saveAudioSettings(settings) {
     try {
-      localStorage.setItem(AUDIO_STORAGE_KEY, JSON.stringify(settings));
+      storageSet(AUDIO_STORAGE_KEY, JSON.stringify(settings));
     } catch (e) {
       // ignore
     }
@@ -1319,7 +1438,7 @@
   // --- Difficulty setting (dropdown: "random" or 1-30)
   function loadDifficultySetting() {
     try {
-      var raw = localStorage.getItem(DIFFICULTY_STORAGE_KEY);
+      var raw = storageGet(DIFFICULTY_STORAGE_KEY);
       if (!raw) return "1";
       var v = JSON.parse(raw);
       if (v === "random") return "random";
@@ -1333,7 +1452,7 @@
 
   function saveDifficultySetting(value) {
     try {
-      localStorage.setItem(DIFFICULTY_STORAGE_KEY, JSON.stringify(value));
+      storageSet(DIFFICULTY_STORAGE_KEY, JSON.stringify(value));
     } catch (e) {
       // ignore
     }
@@ -1456,7 +1575,7 @@
     H = H || WORLD_H;
     var data;
     try {
-      var raw = localStorage.getItem(LEVELS_STORAGE_KEY);
+      var raw = storageGet(LEVELS_STORAGE_KEY);
       data = !raw ? { levels: [] } : JSON.parse(raw);
       if (!data || !Array.isArray(data.levels)) data = { levels: [] };
     } catch (e) {
@@ -1466,7 +1585,7 @@
   }
 
   function saveAllLevels(data) {
-    localStorage.setItem(LEVELS_STORAGE_KEY, JSON.stringify(data));
+    storageSet(LEVELS_STORAGE_KEY, JSON.stringify(data));
   }
 
   function saveCompletedLevel(levelID, name, platforms, goal, bestScore, dotsCollected, levelState, onSaved) {
@@ -4818,8 +4937,17 @@
     }
   }
 
-  // --- Init: bind input, populate dropdown, set initial level, create Phaser game
+  // --- Init: detect backend (or localStorage fallback), bind input, create Phaser game
   function init() {
+    detectBackend().then(function () {
+      bootGame();
+    }).catch(function () {
+      setBackendMode(BACKEND_MODE_LOCAL);
+      bootGame();
+    });
+  }
+
+  function bootGame() {
     populateLevelDropdown();
     populatePlayedDropdown();
     window.__dragonPopulateLevelDropdown = populateLevelDropdown;
