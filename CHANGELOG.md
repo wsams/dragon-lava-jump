@@ -2,6 +2,59 @@
 
 All notable changes to Dragon Lava Jump are documented here.
 
+# 1.0.0 (2026-07-11)
+
+
+### Bug Fixes
+
+* Button updates ([210d081](https://github.com/wsams/dragon-lava-jump/commit/210d081b1693c4fc81f4b3054648c815d850106c))
+* buzzard ([a029a25](https://github.com/wsams/dragon-lava-jump/commit/a029a2549caa00097f7c7d19ae80c6671a234aa0))
+* cheats work on mobile ([8209ae8](https://github.com/wsams/dragon-lava-jump/commit/8209ae876bd4935cdaaa4309e138075bd1ed2917))
+* chomp ([0be3efc](https://github.com/wsams/dragon-lava-jump/commit/0be3efc852ee8e6ec715202674f5f5c5c4db7722))
+* desert fixes ([7c1edf1](https://github.com/wsams/dragon-lava-jump/commit/7c1edf182539671f7fbb244d032014a40bae420b))
+* effect updates ([58ffc71](https://github.com/wsams/dragon-lava-jump/commit/58ffc71b83b71c1d37dccb8678023d5787c8a8ea))
+* flames work in desert ([b8dc1c2](https://github.com/wsams/dragon-lava-jump/commit/b8dc1c211788dcc135b9755d6f478e992a8db4d6))
+* keep score! ([b6cb1c6](https://github.com/wsams/dragon-lava-jump/commit/b6cb1c6537d5468c3b5e4a2462a5e2a0ff9702c5))
+* Lava orb now works ([073c389](https://github.com/wsams/dragon-lava-jump/commit/073c3894767b94ba25d553de7e0f11f950d7f371))
+* Lots of fixes ([881bf54](https://github.com/wsams/dragon-lava-jump/commit/881bf540ce8f632e5c81cdb8f867b77b6873d8e0))
+* power up swapping logic ([1f13c9e](https://github.com/wsams/dragon-lava-jump/commit/1f13c9e4d17ba6a452b3bb52310fc9fd550bfc8b))
+* refactor ([b22a36c](https://github.com/wsams/dragon-lava-jump/commit/b22a36c53e46546cc9704b040f2b4e8f6d118766))
+* refactor dir names ([926465a](https://github.com/wsams/dragon-lava-jump/commit/926465a1ad7a2ac5f8dd708ca061dee1894a90fb))
+* rename folders ([6c3c242](https://github.com/wsams/dragon-lava-jump/commit/6c3c24288a119e215bb425a4f7d3aeb776979eb2))
+* renamed back to dragonlavajump.html ([fe06cf1](https://github.com/wsams/dragon-lava-jump/commit/fe06cf11550d01d48402d48fa6cae9587a73dad1))
+* Resolve double jump boost regression ([763ddf4](https://github.com/wsams/dragon-lava-jump/commit/763ddf4bf1dc31f16b486dbf30ad44cdd3f60e10))
+* Resolve regressions ([b258c29](https://github.com/wsams/dragon-lava-jump/commit/b258c29be4576e5f8c9f643b557068e3b7f339b1))
+* restore after reset ([d7dbfd3](https://github.com/wsams/dragon-lava-jump/commit/d7dbfd300a3213aae9785b1a63e8d92da8b0320d))
+* scorpion ([2762ac2](https://github.com/wsams/dragon-lava-jump/commit/2762ac26f87bd7712767f9a1ffd858f335d1315c))
+* stabalizations of phaser ([a8b9918](https://github.com/wsams/dragon-lava-jump/commit/a8b9918d8f37d9230b660937d362d8a522036dc9))
+* stabalize screen size ([a8cb0c9](https://github.com/wsams/dragon-lava-jump/commit/a8cb0c9803ba2d106332148995d8d2ea159432b2))
+* stuff ([a9f8bb2](https://github.com/wsams/dragon-lava-jump/commit/a9f8bb2e85c972fa822693e8cd60fcd95923f559))
+* style dragon ([cbe9c51](https://github.com/wsams/dragon-lava-jump/commit/cbe9c515d2f07922df18411be01364de7f81cd2b))
+* time bug fixed ([460d914](https://github.com/wsams/dragon-lava-jump/commit/460d914e8017993b8317ae8578a9983ad2c631b5))
+* ui refinements ([8e1e7af](https://github.com/wsams/dragon-lava-jump/commit/8e1e7afefaccb56c20e05d338211bf5d419dd321))
+* Update favicon ([55c5732](https://github.com/wsams/dragon-lava-jump/commit/55c57323d1fe44ca2cee626849059e0289d1bb5f))
+* Update instructions ([25b84f9](https://github.com/wsams/dragon-lava-jump/commit/25b84f9f0aed90c624310da369c58626d73e90ca))
+
+
+### Features
+
+* add checkpoints ([e6919dc](https://github.com/wsams/dragon-lava-jump/commit/e6919dcc60002bc7b990768a628734628ed64ede))
+* add chomp sound ([85ae11b](https://github.com/wsams/dragon-lava-jump/commit/85ae11b3ec9222e1a19ca2ff5f977282f5acf125))
+* add minification ([b03f2d2](https://github.com/wsams/dragon-lava-jump/commit/b03f2d281054667a3fd520141da0e928ffb8327b))
+* add slam down ([f86a9eb](https://github.com/wsams/dragon-lava-jump/commit/f86a9ebb6e4ffcbb8f8ae4b61fc9dd9857f9da92))
+* Add win animation ([d4d6a73](https://github.com/wsams/dragon-lava-jump/commit/d4d6a736c91ad37ce487fcc0fb9673363fd4cecc))
+* cheats! ([69b805c](https://github.com/wsams/dragon-lava-jump/commit/69b805c426b0cf368226a70f13a20a34a44192b8))
+* desert biome ([7124821](https://github.com/wsams/dragon-lava-jump/commit/7124821889ed17207e41b93a2b4003d5eeb12884))
+* desert music and fixes ([9eb210c](https://github.com/wsams/dragon-lava-jump/commit/9eb210ca78286254e5133d9c0905ddaacb91dbb4))
+* game refactor ([e117070](https://github.com/wsams/dragon-lava-jump/commit/e117070d42f76599f8c05c82afda99e62e9ab7cc))
+* level history ([73d2477](https://github.com/wsams/dragon-lava-jump/commit/73d24773f22ab09d640013a4cee69c278cc33a46))
+* more complex levels ([b41f3d1](https://github.com/wsams/dragon-lava-jump/commit/b41f3d17eccf4221abe0d608cf10efebd42488c6))
+* OCEAN! ([fbe300d](https://github.com/wsams/dragon-lava-jump/commit/fbe300dd01558c34ed5d3d3c3a265c96064c3654))
+* phaser v1 ([88320ae](https://github.com/wsams/dragon-lava-jump/commit/88320ae72d45db779bdb656a58eb8b0e2839e011))
+* proximity based audio ([8ea133e](https://github.com/wsams/dragon-lava-jump/commit/8ea133e7d96c002778e7b3a8acaea80ca16449e6))
+* refactor code layout ([3432db8](https://github.com/wsams/dragon-lava-jump/commit/3432db88cbb98417b40763e6500c3e03545768aa))
+* SOUND! ([3bb59f8](https://github.com/wsams/dragon-lava-jump/commit/3bb59f80613a6d29efe953b48ebc42fbe5b1d2fb))
+
 ---
 
 ## [Unreleased]
