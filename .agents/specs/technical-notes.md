@@ -9,7 +9,7 @@
 - **Physics:** Arcade physics. Player hitbox is fixed; do not tie it to facing direction.
 - **Storage:** Levels and progress are saved via `storageGet` / `storageSet`. Keys: `dragonLevels`, `dragonProfile`, `dragonAudio`, `dragonDifficulty`, `dragonBiome`, `dragonScores`.
 - **Backend detection:** On boot, `detectBackend()` probes `api/health` and `api/health.php`. If no API responds (GitHub Pages, `file://`, plain static servers), mode is `local` and all persistence uses `localStorage`. Mode is exposed as `window.__dragonBackendMode` (`"local"` | `"remote"`). Override with `?backend=local` or `?backend=remote`.
-- **GitHub Pages:** `.github/workflows/pages.yml` builds a static `_site` (html, css, js, assets, `.nojekyll`) and deploys with `actions/deploy-pages`.
+- **GitHub Pages:** `.github/workflows/pages.yml` builds a static `_site` (html, css, js, assets, `.nojekyll`) and deploys with `actions/deploy-pages`. Pages must be enabled once in repo settings (**Settings → Pages → Source: GitHub Actions**); the default `GITHUB_TOKEN` cannot turn Pages on by itself.
 
 ## Requirements
 

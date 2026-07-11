@@ -80,6 +80,21 @@ const pagesWorkflow = readFileSync(
 assert.match(pagesWorkflow, /actions\/deploy-pages/, "pages workflow should deploy to Pages");
 assert.match(pagesWorkflow, /upload-pages-artifact/, "pages workflow should upload artifact");
 assert.match(pagesWorkflow, /_site/, "pages workflow should assemble _site");
+assert.match(
+  pagesWorkflow,
+  /enablement:\s*true/,
+  "pages workflow should attempt Pages enablement"
+);
+assert.match(
+  pagesWorkflow,
+  /settings\/pages/,
+  "pages workflow should link to Settings → Pages when enablement fails"
+);
+assert.match(
+  readme,
+  /Settings → Pages/,
+  "README should document the one-time Pages settings step"
+);
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 assert.equal(pkg.name, "dragon-lava-jump");

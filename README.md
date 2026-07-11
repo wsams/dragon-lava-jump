@@ -22,9 +22,17 @@ No PHP or other server backend is required. On load the game probes for an optio
 
 ### GitHub Pages
 
-A workflow (`.github/workflows/pages.yml`) deploys the static site on every push to `main`. After Pages is enabled for the repo (Settings → Pages → Source: GitHub Actions), the game is available at:
+Play URL: `https://wsams.github.io/dragon-lava-jump/`
 
-`https://wsams.github.io/dragon-lava-jump/`
+A workflow (`.github/workflows/pages.yml`) deploys the static site on every push to `main` (and via **Actions → Deploy GitHub Pages → Run workflow**).
+
+**One-time setup (required):** Pages is not on by default. A repo admin must enable it once:
+
+1. Open [Settings → Pages](https://github.com/wsams/dragon-lava-jump/settings/pages)
+2. Under **Build and deployment → Source**, choose **GitHub Actions**
+3. Re-run the **Deploy GitHub Pages** workflow (or push to `main`)
+
+Until that is done, `https://wsams.github.io/dragon-lava-jump/` returns 404 and the deploy workflow fails at “Setup Pages”.
 
 Scores and progress on Pages are per-browser (localStorage), not shared across devices.
 
