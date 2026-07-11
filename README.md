@@ -6,6 +6,8 @@ A side-scrolling platformer in which you guide a dragon across platforms, over l
 
 **[Play in your browser →](https://wsams.github.io/dragon-lava-jump/)** — no install, just jump in and chase that golden door.
 
+![Dragon Lava Jump gameplay — green dragon on purple platforms with on-screen touch controls](assets/screenshot.png)
+
 ## About the game
 
 - **Goal:** Reach the golden door at the end of the level before running out of lives. Collect dots, avoid or defeat slimes, bats, and crawlers, and use lava bounces and power-ups to get ahead. You can hold only one power-up at a time (lava orb, fire totem, or in Desert the chomp power-up); picking up a new one replaces the previous. **Score** is earned from dots, creature kills, power-ups, and winning; higher difficulty multiplies points. Scores are stored per level per user (or "anonymous" if not signed in).
