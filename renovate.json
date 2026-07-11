@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":maintainLockFilesWeekly"
+  ],
+  "timezone": "UTC",
+  "schedule": ["at any time"],
+  "rangeStrategy": "bump",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+  "packageRules": [
+    {
+      "description": "Keep GitHub Actions and npm deps on the newest available releases",
+      "matchManagers": ["npm", "github-actions"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Group non-major npm updates to reduce PR noise",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm non-major dependencies"
+    },
+    {
+      "description": "Group non-major GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "github-actions non-major"
+    }
+  ]
+}
