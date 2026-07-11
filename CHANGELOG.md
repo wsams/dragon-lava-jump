@@ -2,6 +2,13 @@
 
 All notable changes to Dragon Lava Jump are documented here.
 
+# [1.1.0](https://github.com/wsams/dragon-lava-jump/compare/v1.0.0...v1.1.0) (2026-07-11)
+
+
+### Features
+
+* backendless localStorage mode and GitHub Pages deploy ([#5](https://github.com/wsams/dragon-lava-jump/issues/5)) ([d1b37ef](https://github.com/wsams/dragon-lava-jump/commit/d1b37ef94c0786669a80e82729bb23a01a9015e9))
+
 # 1.0.0 (2026-07-11)
 
 
