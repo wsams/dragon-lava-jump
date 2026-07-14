@@ -52,7 +52,7 @@ jobs:
       - name: Setup Pages
         id: configure_pages
         continue-on-error: true
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           # Best-effort: requires a token that can administer Pages.
           # Default GITHUB_TOKEN usually cannot enable Pages; see next step.
