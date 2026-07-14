@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Favicon optional: add dragon.ico to project root if desired -->
+  <title>Dragon Lava Run</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" type="image/x-icon" href="dragon.ico">
+</head>
+<body>
+
+  <div id="menu">
+    <select id="biomeSelect" title="Biome (world style)"></select>
+    <select id="levelSelect" title="Select a level"></select>
+    <select id="playedSelect" title="Previously played levels"></select>
+    <select id="difficultySelect" title="Difficulty (affects level generation)"></select>
+    <button id="newLevelBtn" type="button" title="New random level">New</button>
+    <button id="restartLevelBtn" type="button" title="Restart current level from the beginning">Restart</button>
+    <button id="shareBtn" type="button" aria-label="Share" title="Copy level link to clipboard">⤴</button>
+    <button id="leaderboardBtn" type="button" title="View leaderboard for selected level">Leaderboard</button>
+    <button id="instructionsBtn" type="button" title="How to play">Instructions</button>
+    <button id="cheatsBtn" type="button" class="cheats-btn-mobile" title="Cheat codes (score not saved)">Cheats</button>
+    <button id="muteSfxBtn" type="button" aria-label="Toggle SFX" title="Mute / unmute sound effects"></button>
+    <button id="muteMusicBtn" type="button" aria-label="Toggle music" title="Mute / unmute music"></button>
+    <div id="userForm">
+      <input id="usernameInput" type="text" placeholder="Your name" title="Your player name">
+      <button id="saveUserBtn" type="button" title="Save player name">Save</button>
+    </div>
+  </div>
+
+  <div id="game-container">
+    <div id="game-wrapper">
+      <!-- Phaser 3 creates and mounts the game canvas here -->
+      <div id="phaser-game"></div>
+      <div id="winOverlay" style="display: none;">
+        <div class="win-panel">
+          <button type="button" id="winCloseBtn" class="win-close" aria-label="Close">×</button>
+          <h2 class="win-title">You Win!</h2>
+          <p class="win-stat"><span id="winTime">Time: 0.00s</span></p>
+          <p class="win-stat">Score: <span id="winScore">0</span></p>
+          <p class="win-stat">Dots: <span id="winDots">0/30</span></p>
+          <p class="win-stat"><span id="winBest">Best: --</span></p>
+          <div class="win-actions">
+            <button type="button" id="winNextLevelBtn">Next level →</button>
+            <button type="button" id="winReplayBtn">Replay</button>
+            <button type="button" id="winNewLevelBtn">New level</button>
+          </div>
+        </div>
+      </div>
+      <div id="leaderboardOverlay" style="display: none;">
+        <div class="leaderboard-panel">
+          <button type="button" id="leaderboardCloseBtn" class="win-close" aria-label="Close">×</button>
+          <h2 class="leaderboard-title">Level leaderboard</h2>
+          <p id="leaderboardLevelName" class="leaderboard-subtitle"></p>
+          <div id="leaderboardContent" class="leaderboard-content"></div>
+          <p id="leaderboardEmpty" class="leaderboard-empty" style="display: none;">No completed runs yet. Win the level to appear here.</p>
+        </div>
+      </div>
+      <div id="instructionsOverlay" style="display: none;">
+        <div class="instructions-panel">
+          <button type="button" id="instructionsCloseBtn" class="win-close" aria-label="Close">×</button>
+          <h2 class="instructions-title">How to play</h2>
+          <p id="instructionsIntro" class="instructions-intro">Loading…</p>
+          <div id="instructionsContentRoot" class="instructions-content instructions-context-default" tabindex="0">
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Keyboard</h3>
+              <ul class="instructions-list">
+                <li><strong>← →</strong> or <strong>A D</strong> — Move</li>
+                <li><strong>↓</strong> or <strong>S</strong> — Slam down (while in the air)</li>
+                <li><strong>Space</strong> / <strong>W</strong> / <strong>↑</strong> — Jump; second press in air = double jump (where allowed)</li>
+                <li class="instructions-keyboard-airboost"><strong>F</strong> — In the air: one <strong>forward boost</strong> per jump (after a short air time).</li>
+                <li class="instructions-keyboard-oceanboost"><strong>F</strong> — Underwater: <strong>swim burst</strong> forward (short cooldown; same key as air boost).</li>
+                <li class="instructions-keyboard-fire"><strong>G</strong> — Fire breath when you have it (not in Ocean).</li>
+              </ul>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Touch</h3>
+              <p class="instructions-p">On-screen buttons match the actions above (move, slam, jump, boost, breath). Icons only — no text on buttons.</p>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Goal</h3>
+              <ul class="instructions-list">
+                <li>Reach the <strong>golden goal</strong> pillar.</li>
+                <li>Collect all <strong>30 dots</strong> (pink).</li>
+                <li class="instructions-goal-lava"><strong>Lava</strong> at the bottom kills you unless you have a lava-bounce pickup.</li>
+                <li class="instructions-goal-ocean">No lava — watch your <strong>breath</strong>, <strong>vents</strong>, and enemies instead.</li>
+                <li><strong>Checkpoints</strong> — Touch flag poles to respawn from there after a death.</li>
+              </ul>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--cave">
+              <h3 class="instructions-heading">This level — Cave hazards</h3>
+              <p class="instructions-p">Avoid <strong>slimes</strong>, <strong>bats</strong>, <strong>crawlers</strong>, and <strong>stalactites</strong>. Some platforms may <strong>drop</strong> after you stand on them.</p>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--desert">
+              <h3 class="instructions-heading">This level — Desert hazards</h3>
+              <p class="instructions-p">Avoid <strong>cacti</strong>, <strong>scorpions</strong>, <strong>buzzards</strong>, and <strong>flying needles</strong>. <strong>Chomp</strong> (teeth pickup): face enemies to eat them; from behind or cactus you lose chomp but survive once.</p>
+            </section>
+            <section class="instructions-section instructions-biome instructions-biome--ocean">
+              <h3 class="instructions-heading">This level — Ocean hazards</h3>
+              <ul class="instructions-list">
+                <li><strong>Swim</strong> underwater; <strong>breath meter</strong> — surface or use <strong>air canisters</strong>. No lava orb.</li>
+                <li><strong>Bubble columns</strong> pull you inward and down (black-hole style); <strong>floor holes</strong> are as wide as the column — death after the full pull-in animation.</li>
+                <li><strong>Seagulls</strong> if you surface for air; <strong>barracudas</strong>, <strong>jellyfish</strong>, <strong>urchins</strong> underwater.</li>
+              </ul>
+            </section>
+            <section class="instructions-section">
+              <h3 class="instructions-heading">Power-ups (this biome)</h3>
+              <p class="instructions-p instructions-pu instructions-pu--cave">Only <strong>one</strong> at a time: <strong>orange orb</strong> — lava bounces; <strong>fire totem</strong> — one flame (G).</p>
+              <p class="instructions-p instructions-pu instructions-pu--desert">Only <strong>one</strong> at a time: <strong>orb</strong>, <strong>fire totem</strong>, or <strong>chomp</strong> (teeth) — Desert-only chomp lets you eat enemies from the front.</p>
+              <p class="instructions-p instructions-pu instructions-pu--ocean"><strong>Air canisters</strong> — no lava orb; no fire totem / G breath in Ocean.</p>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="onscreen-controls">
+      <div class="move-group">
+        <div class="move-row">
+          <div class="btn-wrap"><button type="button" id="btnLeft" aria-label="Move left"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button></div>
+          <div class="btn-wrap"><button type="button" id="btnRight" aria-label="Move right"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button></div>
+        </div>
+        <div class="move-row">
+          <div class="btn-wrap btn-down-wrap"><button type="button" id="btnDown" aria-label="Slam down"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button></div>
+        </div>
+      </div>
+      <div class="action-group">
+        <div class="btn-wrap"><button type="button" id="btnBreath" aria-label="Fire breath"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10.94c2.33-3.31.17-7.82-1-8.94 0 3.4-2.24 5.3-3.67 6.7-1.43 1.41-2.33 3.29-2.33 5.59 0 3.7 3.13 6.7 7 6.7 3.87 0 7-3 7-6.7 0-1.71-1.23-4.4-2.33-5.59-2.08 3.35-3.26 3.35-4.67 2.24"/></svg></button></div>
+        <div class="btn-wrap"><button type="button" id="btnJump" aria-label="Jump"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
+        <div id="cheatOverlay" style="display: none;">
+          <div class="cheat-panel">
+            <button type="button" id="cheatCloseBtn" class="win-close" aria-label="Close">×</button>
+            <h3 class="cheat-title">Cheat code</h3>
+            <p class="cheat-hint">Using any cheat disables score saving for this run.</p>
+            <form id="cheatForm">
+              <input type="text" id="cheatInput" placeholder="Type code and press Enter" autocomplete="off" />
+            </form>
+            <p id="cheatMessage" class="cheat-message"></p>
+            <p class="cheat-codes">orb · flame · chomp · god · lives</p>
+          </div>
+        </div>
+        <div class="btn-wrap"><button type="button" id="btnBoost" aria-label="Boost"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 8L4 12l6 4M14 8l6 4-6 4"/></svg></button></div>
+      </div>
+    </div>
+  </div>
+
+  <footer id="page-footer">
+    <a href="https://github.com/wsams/dragon-lava-jump" target="_blank" rel="noopener noreferrer" class="footer-repo" title="View source on GitHub">View on GitHub</a>
+    &nbsp;•&nbsp;
+    Built with <a href="https://phaser.io/" target="_blank" rel="noopener noreferrer">Phaser</a>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script src="js/game-phaser.js"></script>
+</body>
+</html>

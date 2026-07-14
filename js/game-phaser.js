@@ -1,0 +1,5573 @@
+/**
+ * Dragon Lava Jump - Phaser 3 port.
+ * Single script (no ES modules) so it runs from file:// or any simple server.
+ * Uses fixed hitbox for player: body size/offset do not depend on facing (no swing death).
+ */
+(function () {
+  "use strict";
+
+  // --- Constants (match legacy for physics and layout)
+  var LEVEL_LENGTH = 4000;
+  var REFERENCE_FPS = 60;
+  var WORLD_H = 360;
+  var gravity = 0.5 * REFERENCE_FPS * REFERENCE_FPS;
+  var moveSpeed = 3.5 * REFERENCE_FPS;
+  var jumpStrength = 10 * REFERENCE_FPS;
+  var NUM_DOTS = 30;
+  var DOT_R = 3.5;
+  var DOT_SAFETY_MARGIN = 15;
+  var SLIME_AVOID_BAND = 0.28;
+  var CACTUS_AVOID_BAND = 0.2;  // dots must not touch cacti (platform-ratio band each side of cactus center)
+  var STALACTITE_AVOID_BAND = 28;  // pixels: no checkpoint/dot directly under a stalactite
+  var POLE_W = 12;
+  var POLE_H = 40;
+  var LIVES_START = 3;
+  var SLIME_JUMP_STRENGTH = 7 * REFERENCE_FPS;
+  var BAT_W = 24;
+  var BAT_H = 16;
+  var BAT_MAX_SPEED = 2.2 * REFERENCE_FPS;
+  var BAT_WANDER_STRENGTH = 0.5 * REFERENCE_FPS;
+  var CRAWLER_W = 20;
+  var CRAWLER_H = 14;
+  var CRAWLER_PERIMETER_SPEED = 0.004 * REFERENCE_FPS;
+  var DRAGON_W = 30;
+  var DRAGON_H = 26;
+  var DRAGON_MOUTH_OVERHANG = 6;
+  var DOUBLE_JUMP_PLAT_W = 24;
+  var DOUBLE_JUMP_PLAT_H = 8;
+  var DOUBLE_JUMP_PLAT_FADE_DURATION = 150;
+  var DOUBLE_JUMP_PLAT_VISIBLE_MS = 220;
+  var GROUND_EDGE_TOLERANCE = 12;   // pixels past platform edge still count as "on platform" for jump
+  var GROUND_TOP_TOLERANCE = 10;    // feet within this many px above platform top = on ground
+  var BREATH_LEN = 50;
+  var BOOST_AIR_DELAY_SEC = 6 / REFERENCE_FPS;
+  // Boost = straight forward only, strong horizontal push (no vertical)
+  var BOOST_DURATION_SEC = 14 / REFERENCE_FPS;
+  var BOOST_POWER_H = (72 / 12) * REFERENCE_FPS * REFERENCE_FPS;
+  /** Ocean: F while underwater — short forward burst, separate cooldown from air boost (see biome-ocean.md). */
+  var OCEAN_SWIM_BOOST_DURATION_SEC = 16 / REFERENCE_FPS;
+  var OCEAN_SWIM_BOOST_COOLDOWN_SEC = 1.35;
+  /** Underwater F burst — applied after vent/current so it isn’t overwritten (Zora-suit–like escape). */
+  var OCEAN_SWIM_BOOST_POWER_H = (44 / 12) * REFERENCE_FPS * REFERENCE_FPS;
+  /** Passive sink cap + upward bias while submerged (not in vent column). Lower = slower drift down. */
+  var OCEAN_BUOYANCY_MAX_FALL = 78;
+  var OCEAN_BUOYANCY_UP_BIAS = 24;
+  var maxUpwardVy = -jumpStrength - 0.5 * REFERENCE_FPS;
+  var SLAM_DOWN_VY = 550;  // px/s when holding down in air (fast drop, not instant)
+  // Stronger lava bounce (approx a jump or higher)
+  var LAVA_BOUNCE_VY = -jumpStrength * 1.1;
+  var LAVA_DEATH_DURATION = 35 / REFERENCE_FPS;
+  // Max distance (px) at which creature/platform sounds are audible (~just off screen)
+  var HEARING_MAX_DISTANCE = 420;
+
+  // --- RNG
+  function makeRng(seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  }
+  function rngRange(rng, min, max) {
+    return min + rng() * (max - min);
+  }
+
+  // --- Level generation (ported from legacy levelGen.js)
+  function generateCeilingAndStalactites(difficulty, seed, platforms, worldHeight, worldMinY) {
+    worldHeight = worldHeight || WORLD_H;
+    worldMinY = worldMinY != null ? worldMinY : 0;
+    var rng = makeRng(seed);
+    var pts = [];
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var t = (dClamped - 1) / 29;
+    var step = 120;
+    var x = 0;
+    var baseY = 30;
+    var amp = 8 + t * 22;
+    var ceilingMinY = worldMinY + 20;
+    while (x <= LEVEL_LENGTH) {
+      var minPlatY = worldHeight;
+      for (var pi = 0; pi < (platforms || []).length; pi++) {
+        var plat = platforms[pi];
+        if (!plat) continue;
+        if (x >= plat.x && x <= plat.x + (plat.w || 0)) {
+          if (plat.y < minPlatY) minPlatY = plat.y;
+        }
+      }
+      var roofY = minPlatY < worldHeight ? minPlatY - 60 : baseY;
+      var y = roofY + rngRange(rng, -amp, amp);
+      y = Math.max(ceilingMinY, Math.min(roofY + 40, y));
+      pts.push({ x: x, y: y });
+      baseY = baseY * 0.5 + y * 0.5;
+      x += step;
+    }
+    var stalDefs = [];
+    var maxStals = 3 + Math.floor(dClamped / 4);
+    var available = pts.slice(1, pts.length - 1);
+    for (var i = 0; i < maxStals && available.length > 0; i++) {
+      var idx = Math.floor(rng() * available.length);
+      var p = available.splice(idx, 1)[0];
+      var w = 18 + rng() * 8;
+      var lenMin = 18 + t * 6;
+      var lenMax = 34 + t * 10;
+      var length = rngRange(rng, lenMin, lenMax);
+      if (Array.isArray(platforms) && platforms.length) {
+        var nearestY = Infinity;
+        for (var pi = 0; pi < platforms.length; pi++) {
+          var plat = platforms[pi];
+          if (!plat) continue;
+          if (p.x >= plat.x && p.x <= plat.x + plat.w && plat.y > p.y && plat.y < nearestY)
+            nearestY = plat.y;
+        }
+        if (nearestY < Infinity) {
+          var clearance = 26 * (3.0 - 0.5 * t) + 16;
+          var maxAllowed = nearestY - p.y - clearance;
+          if (maxAllowed <= 26) continue;
+          length = Math.min(length, maxAllowed);
+        }
+      }
+      stalDefs.push({ x: p.x, y: p.y, length: length, w: w });
+    }
+    return { ceilingPoints: pts, stalactites: stalDefs };
+  }
+
+  function pickBatCountForDifficulty(difficulty) {
+    if (difficulty <= 8) return 1;
+    if (difficulty <= 16) return 2;
+    if (difficulty <= 24) return 3;
+    return 4;
+  }
+  function generateBats(difficulty, seed, H) {
+    var rng = makeRng(seed);
+    var count = pickBatCountForDifficulty(difficulty);
+    var defs = [];
+    var marginX = 250;
+    var yMin = 100;
+    var yMax = H - 150;
+    for (var i = 0; i < count; i++) {
+      defs.push({
+        x: rngRange(rng, marginX, LEVEL_LENGTH - marginX),
+        y: rngRange(rng, yMin, yMax),
+        rngSeed: seed + 777 + i
+      });
+    }
+    return defs;
+  }
+  function generateLavaBounceItem(seed, H, platforms) {
+    var rng = makeRng(seed);
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.35 + rng() * 0.35));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -40, 40);
+      y = (p.y || 0) - 36 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH / 2 + rngRange(rng, -80, 80);
+      y = H - 220 + rngRange(rng, -30, 30);
+    }
+    return [{ type: "lavaBounce", x: x, y: y, w: 28, h: 28 }];
+  }
+  function generateFireTotemItem(seed, H, platforms) {
+    var rng = makeRng(seed);
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.15 + rng() * 0.35));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -30, 30);
+      y = (p.y || 0) - 40 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH / 4 + rngRange(rng, -60, 60);
+      y = H - 200 + rngRange(rng, -40, 20);
+    }
+    return [{ type: "fireTotem", x: x, y: y, w: 24, h: 36 }];
+  }
+  function generateChompItem(seed, H, platforms) {
+    var rng = makeRng(seed);
+    var x, y;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      var idx = Math.floor(platforms.length * (0.5 + rng() * 0.25));
+      idx = Math.max(0, Math.min(idx, platforms.length - 1));
+      var p = platforms[idx];
+      x = p.x + (p.w || 0) / 2 + rngRange(rng, -40, 40);
+      y = (p.y || 0) - 32 + rngRange(rng, -8, 8);
+    } else {
+      x = LEVEL_LENGTH * 0.6 + rngRange(rng, -60, 60);
+      y = H - 220 + rngRange(rng, -30, 30);
+    }
+    return [{ type: "chomp", x: x, y: y, w: 28, h: 28 }];
+  }
+
+  /** Ocean: air canisters (no lava orb). Spread through depth bands for panic relief. */
+  function generateAirCanisterItems(seed, difficulty, platforms, waterSurfaceY, floorY) {
+    var rng = makeRng(seed + 8123);
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var count = 9 + Math.floor(dClamped / 3);
+    var items = [];
+    var surf = typeof waterSurfaceY === "number" ? waterSurfaceY : OCEAN_SURFACE_Y;
+    var floor = typeof floorY === "number" ? floorY : OCEAN_FLOOR_Y;
+    var deepTop = surf + 55;
+    var deepBot = floor - 50;
+    for (var i = 0; i < count; i++) {
+      var x = rngRange(rng, 120 + i * (LEVEL_LENGTH / (count + 2)), LEVEL_LENGTH - 100);
+      var band = rng();
+      var y;
+      if (band < 0.34) {
+        y = rngRange(rng, deepTop, deepTop + (deepBot - deepTop) * 0.35);
+      } else if (band < 0.67) {
+        y = rngRange(rng, deepTop + (deepBot - deepTop) * 0.3, deepTop + (deepBot - deepTop) * 0.7);
+      } else {
+        y = rngRange(rng, deepTop + (deepBot - deepTop) * 0.55, deepBot);
+      }
+      if (Array.isArray(platforms) && platforms.length > 0 && rng() < 0.45) {
+        var pi = Math.floor(rng() * platforms.length);
+        var p = platforms[pi];
+        if (p && !p.isFloor && !p.isIce) {
+          x = p.x + (p.w || 0) * (0.2 + rng() * 0.6);
+          y = (p.y || 0) - 28 + rngRange(rng, -20, 10);
+        }
+      }
+      y = Math.max(surf + 35, Math.min(floor - 40, y));
+      items.push({ type: "airCanister", x: x - 9, y: y - 14, w: 18, h: 28 });
+    }
+    return items;
+  }
+
+  function generateSeagullDefs(difficulty, seed, waterSurfaceY, worldMinY) {
+    var rng = makeRng(seed + 9200);
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var count = 5 + Math.floor(dClamped / 3) + Math.floor(rng() * 3);
+    var surf = typeof waterSurfaceY === "number" ? waterSurfaceY : OCEAN_SURFACE_Y;
+    var skyY = (typeof worldMinY === "number" ? worldMinY : 0) + 18;
+    var defs = [];
+    for (var i = 0; i < count; i++) {
+      defs.push({
+        x: rngRange(rng, 80 + i * 70, LEVEL_LENGTH - 80),
+        y: skyY + rngRange(rng, 0, 22),
+        patrolW: 70 + rng() * 100,
+        /** Optional per-bird swoop strength multiplier (0.85–1.15); base caps are constants. */
+        swoopMult: 0.85 + rng() * 0.3,
+        rngSeed: seed + 9300 + i
+      });
+    }
+    return defs;
+  }
+  function pickSlimeCountForDifficulty(difficulty) {
+    if (difficulty <= 3) return 1;
+    if (difficulty <= 6) return 2;
+    if (difficulty <= 10) return 3;
+    if (difficulty <= 15) return 4;
+    if (difficulty <= 20) return 5;
+    if (difficulty <= 25) return 6;
+    return 7;
+  }
+  function generateSlimesForPlatforms(platforms, difficulty, seed) {
+    var rng = makeRng(seed);
+    var indices = [];
+    for (var i = 1; i < platforms.length; i++) indices.push(i);
+    if (!indices.length) return [];
+    var maxSlimes = pickSlimeCountForDifficulty(difficulty);
+    var count = Math.min(maxSlimes, indices.length);
+    var defs = [];
+    for (var n = 0; n < count; n++) {
+      var pick = Math.floor(rng() * indices.length);
+      var platformIndex = indices.splice(pick, 1)[0];
+      defs.push({
+        platformIndex: platformIndex,
+        offset: rngRange(rng, 0.2, 0.8),
+        delay: Math.floor(60 + rng() * 120)
+      });
+    }
+    return defs;
+  }
+  function generateCheckpoints(platforms, slimeDefs, seed, obstacleOpts) {
+    obstacleOpts = obstacleOpts || {};
+    var slimePlatformIndices = new Set((slimeDefs || []).map(function (s) { return s.platformIndex; }));
+    var cactusPlatformIndices = new Set();
+    (obstacleOpts.cactusDefs || []).forEach(function (c) { cactusPlatformIndices.add(c.platformIndex); });
+    var stalactiteDefs = obstacleOpts.stalactiteDefs || [];
+    var excludedByStalactite = new Set();
+    for (var si = 0; si < platforms.length; si++) {
+      var p = platforms[si];
+      if (!p) continue;
+      for (var st = 0; st < stalactiteDefs.length; st++) {
+        var sx = stalactiteDefs[st].x;
+        if (sx >= p.x - STALACTITE_AVOID_BAND && sx <= p.x + (p.w || 0) + STALACTITE_AVOID_BAND)
+          excludedByStalactite.add(si);
+      }
+    }
+    var candidates = platforms
+      .map(function (p, i) { return { p: p, i: i }; })
+      .filter(function (x) {
+        if (x.i <= 0) return false;
+        if (slimePlatformIndices.has(x.i)) return false;
+        if (cactusPlatformIndices.has(x.i)) return false;
+        if (excludedByStalactite.has(x.i)) return false;
+        return true;
+      });
+    if (candidates.length < 2) {
+      candidates = platforms.map(function (p, i) { return { p: p, i: i }; }).filter(function (x) { return x.i > 0; });
+    }
+    if (candidates.length < 2) return [];
+    var targetIdx1 = Math.floor(candidates.length * 1 / 3);
+    var targetIdx2 = Math.floor(candidates.length * 2 / 3);
+    targetIdx1 = Math.min(targetIdx1, candidates.length - 2);
+    targetIdx2 = Math.max(targetIdx2, targetIdx1 + 1);
+    targetIdx2 = Math.min(targetIdx2, candidates.length - 1);
+    var idx1 = candidates[targetIdx1].i;
+    var idx2 = candidates[targetIdx2].i;
+    if (idx1 === idx2 && candidates.length >= 2) idx2 = candidates[Math.min(targetIdx2 + 1, candidates.length - 1)].i;
+    return [{ platformIndex: idx1, offset: 0.5 }, { platformIndex: idx2, offset: 0.5 }];
+  }
+  function pickCrawlerCountForDifficulty(difficulty) {
+    if (difficulty <= 5) return 1;
+    if (difficulty <= 15) return 2;
+    return 3;
+  }
+  function generateCrawlers(platforms, slimeDefs, difficulty, seed) {
+    var rng = makeRng(seed);
+    var slimePlatforms = new Set((slimeDefs || []).map(function (s) { return s.platformIndex; }));
+    var candidates = platforms
+      .map(function (p, i) { return { p: p, i: i }; })
+      .filter(function (x) { return x.i > 0 && !slimePlatforms.has(x.i); });
+    if (!candidates.length) return [];
+    var count = Math.min(pickCrawlerCountForDifficulty(difficulty), candidates.length);
+    var defs = [];
+    var used = new Set();
+    for (var n = 0; n < count; n++) {
+      var idx = Math.floor(rng() * candidates.length);
+      var tries = candidates.length;
+      while (used.has(idx) && tries--) idx = (idx + 1) % candidates.length;
+      if (used.has(idx)) continue;
+      used.add(idx);
+      defs.push({ platformIndex: candidates[idx].i, offset: rng() });
+    }
+    return defs;
+  }
+  function generateDots(platforms, seed, goal, slimeDefs, crawlerDefs, cactusDefs, stalactiteDefs) {
+    var dots = [];
+    var maxX = (goal && typeof goal.x === "number") ? goal.x - DOT_SAFETY_MARGIN : LEVEL_LENGTH - 50;
+    var crawlerPlatforms = new Set((crawlerDefs || []).map(function (c) { return c.platformIndex; }));
+    var slimeByPlatform = new Map();
+    (slimeDefs || []).forEach(function (s) { slimeByPlatform.set(s.platformIndex, s); });
+    var cactusByPlatform = new Map();
+    (cactusDefs || []).forEach(function (c) {
+      if (!cactusByPlatform.has(c.platformIndex)) cactusByPlatform.set(c.platformIndex, []);
+      cactusByPlatform.get(c.platformIndex).push(c);
+    });
+    var safePlatforms = (platforms || []).map(function (p, i) { return { p: p, i: i }; }).filter(
+      function (x) { return x.p && x.p.w > 12 && x.p.x < maxX && !crawlerPlatforms.has(x.i); }
+    );
+    var segments = [];
+    var stDefs = stalactiteDefs || [];
+    for (var si = 0; si < safePlatforms.length; si++) {
+      var sp = safePlatforms[si];
+      var p = sp.p;
+      var i = sp.i;
+      var left = p.x + 8;
+      var right = Math.min(p.x + p.w - 8, maxX - 4);
+      var y = p.y - 6;
+      if (right <= left) continue;
+      var slime = slimeByPlatform.get(i);
+      var cacti = cactusByPlatform.get(i) || [];
+      var avoidRanges = [];
+      if (slime) {
+        avoidRanges.push([
+          Math.max(left, p.x + p.w * (slime.offset - SLIME_AVOID_BAND)),
+          Math.min(right, p.x + p.w * (slime.offset + SLIME_AVOID_BAND))
+        ]);
+      }
+      cacti.forEach(function (c) {
+        avoidRanges.push([
+          Math.max(left, p.x + p.w * (c.offset - CACTUS_AVOID_BAND)),
+          Math.min(right, p.x + p.w * (c.offset + CACTUS_AVOID_BAND))
+        ]);
+      });
+      for (var st = 0; st < stDefs.length; st++) {
+        var sx = stDefs[st].x;
+        if (sx >= p.x && sx <= p.x + (p.w || 0)) {
+          avoidRanges.push([
+            Math.max(left, sx - STALACTITE_AVOID_BAND),
+            Math.min(right, sx + STALACTITE_AVOID_BAND)
+          ]);
+        }
+      }
+      if (avoidRanges.length === 0) {
+        segments.push({ left: left, right: right, y: y });
+      } else {
+        avoidRanges.sort(function (a, b) { return a[0] - b[0]; });
+        var merged = [];
+        for (var r = 0; r < avoidRanges.length; r++) {
+          var ar = avoidRanges[r];
+          if (merged.length && ar[0] <= merged[merged.length - 1][1]) {
+            merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], ar[1]);
+          } else {
+            merged.push([ar[0], ar[1]]);
+          }
+        }
+        var segLeft = left;
+        for (var m = 0; m < merged.length; m++) {
+          if (segLeft < merged[m][0]) segments.push({ left: segLeft, right: merged[m][0], y: y });
+          segLeft = Math.max(segLeft, merged[m][1]);
+        }
+        if (segLeft < right) segments.push({ left: segLeft, right: right, y: y });
+      }
+    }
+    var totalLen = segments.reduce(function (s, seg) { return s + (seg.right - seg.left); }, 0);
+    if (totalLen <= 0 || segments.length === 0) return dots;
+    for (var j = 0; j < NUM_DOTS; j++) {
+      var t = (j + 0.5) / NUM_DOTS;
+      var targetPos = t * totalLen;
+      var acc = 0;
+      for (var k = 0; k < segments.length; k++) {
+        var seg = segments[k];
+        var len = seg.right - seg.left;
+        if (acc + len >= targetPos) {
+          dots.push({ x: seg.left + (targetPos - acc), y: seg.y });
+          break;
+        }
+        acc += len;
+      }
+    }
+    return dots;
+  }
+
+  function computeWorldHeightFromPlatforms(platforms) {
+    if (!Array.isArray(platforms) || !platforms.length) return WORLD_H;
+    var maxBottom = 0;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p) continue;
+      var bottom = p.y + (p.h || 16);
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return Math.max(maxBottom + 120, WORLD_H);
+  }
+
+  // Base play height for start; dynamic world extends well above and below.
+  // Y increases downward, so smaller/negative values are higher in the cave.
+  var BASE_START_Y = 220;
+  // Allow very tall upward shafts (2–3x current height).
+  var MAX_UP_Y = -400;     // ceiling: platforms can go far above the start
+  // Allow very deep pits.
+  var MAX_DOWN_Y = 1400;   // floor: platforms can go far below the start
+
+  function generateDefaultLevelLayout(difficulty, seed, H) {
+    var rng = makeRng(seed);
+    var platforms = [];
+    var start = { x: 40, y: BASE_START_Y, w: 180, h: 16 };
+    platforms.push(start);
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var t = (dClamped - 1) / 29;
+    var easyMin = 140, easyMax = 220;
+    var hardMin = easyMin * 0.5, hardMax = easyMax * 0.5;
+    var globalMin = easyMin + (hardMin - easyMin) * t;
+    var globalMax = easyMax + (hardMax - easyMax) * t;
+    var shortProb = 0.2 + 0.6 * t;
+    var shortMin = globalMin * 0.6, shortMax = globalMin;
+    var longMin = globalMin, longMax = globalMax * 1.1;
+    var bendChance = 0.1 + 0.6 * t;
+
+    var cx = start.x + start.w + 70;
+    var cy = BASE_START_Y;
+    var segmentCount = 2 + Math.floor(difficulty / 5);
+    segmentCount = Math.min(segmentCount, 7);
+    var segments = [];
+    var lastDir = "right";
+    for (var si = 0; si < segmentCount; si++) {
+      var dir;
+      if (si === 0) {
+        dir = "right";
+      } else if (lastDir === "right") {
+        dir = rng() < 0.5 ? "up" : "down";
+      } else {
+        dir = "right";
+      }
+      lastDir = dir;
+      var platCount = 3 + Math.floor(4 + difficulty * 0.2);
+      if (dir === "right") platCount = Math.floor(platCount * 1.4);
+      segments.push({ dir: dir, platCount: platCount });
+    }
+    if (lastDir !== "right") {
+      segments.push({ dir: "right", platCount: Math.floor(4 + difficulty * 0.15) });
+    }
+
+    for (var si = 0; si < segments.length; si++) {
+      var seg = segments[si];
+      var dir = seg.dir;
+      var platCount = seg.platCount;
+      var gapMin = 90 + difficulty * 4;
+      var gapMax = 130 + difficulty * 8;
+      var vertStep = 55 + difficulty * 2;
+      var vertStepMin = 45;
+      // Vertical segments: larger steps for dramatic ceiling/floor change
+      if (dir === "up") {
+        vertStep = 70 + difficulty * 3;
+        vertStepMin = 55;
+      } else if (dir === "down") {
+        vertStep = 70 + difficulty * 3;
+        vertStepMin = 55;
+      }
+
+      for (var pi = 0; pi < platCount; pi++) {
+        var useShort = rng() < shortProb;
+        var w = useShort ? rngRange(rng, shortMin, shortMax) : rngRange(rng, longMin, longMax);
+        var platform;
+
+        if (dir === "right") {
+          var gap = rngRange(rng, gapMin, gapMax);
+          cx += gap;
+          if (cx > LEVEL_LENGTH - 260) break;
+          var vertAmp = 40 + difficulty * 3;
+          var y = cy + rngRange(rng, -vertAmp, vertAmp);
+          y = Math.max(MAX_UP_Y, Math.min(MAX_DOWN_Y, y));
+          platform = { x: cx, y: y, w: w, h: 16 };
+          cy = cy * 0.6 + y * 0.4;
+        } else if (dir === "up") {
+          if (pi > 0) {
+            var step = rngRange(rng, vertStepMin, vertStep);
+            cy -= step;
+            cy = Math.max(MAX_UP_Y, cy);
+          }
+          var xWiggle = rngRange(rng, -20, 20);
+          cx = Math.max(80, Math.min(LEVEL_LENGTH - 120, cx + xWiggle));
+          platform = { x: cx, y: cy, w: w, h: 16 };
+        } else {
+          if (pi > 0) {
+            var stepD = rngRange(rng, vertStepMin, vertStep);
+            cy += stepD;
+            cy = Math.min(MAX_DOWN_Y, cy);
+          }
+          var xWiggleD = rngRange(rng, -20, 20);
+          cx = Math.max(80, Math.min(LEVEL_LENGTH - 120, cx + xWiggleD));
+          platform = { x: cx, y: cy, w: w, h: 16 };
+        }
+
+        if (rng() < bendChance) {
+          platform.bend = {
+            joint: rngRange(rng, 0.25, 0.75),
+            bendHeight: (rng() < 0.5 ? -1 : 1) * rngRange(rng, 6, 14)
+          };
+        }
+        platforms.push(platform);
+      }
+      if (dir !== "right") {
+        var horizEase = rngRange(rng, 60, 120);
+        cx += horizEase;
+      }
+    }
+
+    // Compute dynamic world vertical span from platform bounds.
+    // minPlatY: highest platform (smallest y), maxPlatY: lowest platform bottom.
+    var minPlatY = Infinity;
+    var maxPlatY = 0;
+    for (var i = 0; i < platforms.length; i++) {
+      var p = platforms[i];
+      if (!p) continue;
+      if (p.y < minPlatY) minPlatY = p.y;
+      var bottom = p.y + (p.h || 16);
+      if (bottom > maxPlatY) maxPlatY = bottom;
+    }
+    if (!isFinite(minPlatY)) minPlatY = BASE_START_Y;
+    var worldHeight = Math.max(maxPlatY + 120, WORLD_H);
+    // World vertical bounds:
+    // - worldMinY can go above 0 so we get tall upward shafts with headroom
+    //   (a margin above the highest platform).
+    // - worldMaxY is the bottom of the cave where lava sits.
+    var worldMinY = Math.min(0, minPlatY - 200);
+    var worldMaxY = worldHeight;
+
+    var dropProbBase = 0.06 + 0.18 * t;
+    var maxDroppers = Math.max(1, Math.floor((platforms.length - 2) * (0.08 + 0.2 * t)));
+    var dropCount = 0;
+    for (var di = 1; di < platforms.length - 1 && dropCount < maxDroppers; di++) {
+      var pp = platforms[di];
+      if (!pp || pp.y > worldHeight - 120) continue;
+      if (rng() > dropProbBase) continue;
+      pp.drop = { delay: 30 + rng() * 45, speed: 2.4 + t * 1.6 };
+      dropCount++;
+    }
+    var last = platforms[platforms.length - 1];
+    var goalX = Math.min(LEVEL_LENGTH - 120, Math.max(last.x + last.w + 80, cx + 80));
+    var goalY = last ? (last.y - 20) : (worldHeight - 120);
+    goalY = Math.max(MAX_UP_Y + 40, Math.min(worldHeight - 120, goalY));
+    var goal = { x: goalX, y: goalY, w: 50, h: 80 };
+    var options = { platforms: platforms, difficulty: dClamped, seed: seed, H: worldHeight, worldMinY: worldMinY, layout: {} };
+    var genLayout = runBiomeGenerators(DefaultBiome, options);
+    var slimes = genLayout.slimes || [];
+    var crawlers = genLayout.crawlers || [];
+    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms).concat(generateFireTotemItem(seed + 999, worldHeight, platforms));
+    var checkpoints = generateCheckpoints(platforms, slimes, seed + 111, { stalactiteDefs: genLayout.stalactites || [], cactusDefs: [] });
+    var dots = generateDots(platforms, seed + 444, goal, slimes, crawlers, undefined, genLayout.stalactites || []);
+    return {
+      platforms: platforms,
+      goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      ceilingPoints: genLayout.ceilingPoints || [],
+      stalactites: genLayout.stalactites || [],
+      bats: genLayout.bats || [],
+      items: items,
+      dots: dots,
+      slimes: slimes,
+      checkpoints: checkpoints,
+      crawlers: crawlers
+    };
+  }
+
+  function crawlerPerimeterPosition(p, t) {
+    var tw = p.w, th = p.h;
+    if (t < 0.25) return { cx: p.x + (t / 0.25) * tw, cy: p.y };
+    if (t < 0.5) return { cx: p.x + tw, cy: p.y + ((t - 0.25) / 0.25) * th };
+    if (t < 0.75) return { cx: p.x + tw - ((t - 0.5) / 0.25) * tw, cy: p.y + th };
+    var f = (t - 0.75) / 0.25;
+    return { cx: p.x, cy: p.y + th - f * th };
+  }
+
+  // --- Backend detection (optional PHP/API) + localStorage fallback
+  // GitHub Pages and other static hosts have no PHP. Probe for an optional API;
+  // when none responds, persist everything in localStorage so the game is fully playable offline.
+  var BACKEND_MODE_LOCAL = "local";
+  var BACKEND_MODE_REMOTE = "remote";
+  var BACKEND_PROBE_PATHS = ["api/health", "api/health.php"];
+  var BACKEND_PROBE_TIMEOUT_MS = 1500;
+  var backendMode = BACKEND_MODE_LOCAL;
+  window.__dragonBackendMode = backendMode;
+
+  function isRemoteBackend() {
+    return backendMode === BACKEND_MODE_REMOTE;
+  }
+
+  function setBackendMode(mode) {
+    backendMode = mode === BACKEND_MODE_REMOTE ? BACKEND_MODE_REMOTE : BACKEND_MODE_LOCAL;
+    window.__dragonBackendMode = backendMode;
+  }
+
+  /** Resolve a path relative to this page (works under GitHub Pages project URLs). */
+  function resolveAppUrl(path) {
+    try {
+      return new URL(path, window.location.href).toString();
+    } catch (e) {
+      return path;
+    }
+  }
+
+  function storageGet(key) {
+    // Remote API persistence can be wired here later; static/Pages mode always uses localStorage.
+    if (isRemoteBackend()) {
+      // No remote storage client yet — fall through to local until an API is implemented.
+    }
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function storageSet(key, value) {
+    if (isRemoteBackend()) {
+      // No remote storage client yet — fall through to local until an API is implemented.
+    }
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      // ignore quota / private-mode errors
+    }
+  }
+
+  function probeBackendPath(path) {
+    if (typeof fetch !== "function") {
+      return Promise.resolve(false);
+    }
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = null;
+    var opts = {
+      method: "GET",
+      cache: "no-store",
+      credentials: "same-origin"
+    };
+    if (controller) {
+      opts.signal = controller.signal;
+      timer = setTimeout(function () {
+        try { controller.abort(); } catch (e) {}
+      }, BACKEND_PROBE_TIMEOUT_MS);
+    }
+    return fetch(resolveAppUrl(path), opts)
+      .then(function (res) {
+        if (!res || !res.ok) return false;
+        var ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
+        if (ct.indexOf("application/json") !== -1) {
+          return res.json().then(function (body) {
+            return !!(body && (body.ok === true || body.status === "ok"));
+          }).catch(function () { return true; });
+        }
+        return true;
+      })
+      .catch(function () { return false; })
+      .then(function (ok) {
+        if (timer) clearTimeout(timer);
+        return ok;
+      });
+  }
+
+  /**
+   * Detect optional server backend. Resolves with "local" or "remote".
+   * On static hosts (e.g. GitHub Pages) probes fail and localStorage mode is used.
+   */
+  function detectBackend() {
+    var force = null;
+    try {
+      var params = new URLSearchParams(window.location.search || "");
+      force = params.get("backend");
+    } catch (e) {}
+    if (force === "local" || force === "offline") {
+      setBackendMode(BACKEND_MODE_LOCAL);
+      return Promise.resolve(BACKEND_MODE_LOCAL);
+    }
+    if (force === "remote" || force === "api") {
+      setBackendMode(BACKEND_MODE_REMOTE);
+      return Promise.resolve(BACKEND_MODE_REMOTE);
+    }
+    var chain = Promise.resolve(false);
+    for (var i = 0; i < BACKEND_PROBE_PATHS.length; i++) {
+      (function (path) {
+        chain = chain.then(function (found) {
+          if (found) return true;
+          return probeBackendPath(path);
+        });
+      })(BACKEND_PROBE_PATHS[i]);
+    }
+    return chain.then(function (found) {
+      setBackendMode(found ? BACKEND_MODE_REMOTE : BACKEND_MODE_LOCAL);
+      return backendMode;
+    });
+  }
+
+  // --- Biomes: abstract level generation and entities per biome
+  var BIOME_STORAGE_KEY = "dragonBiome";
+
+  function getSelectedBiomeId() {
+    try {
+      var v = storageGet(BIOME_STORAGE_KEY);
+      if (v === "desert" || v === "default" || v === "ocean") return v;
+    } catch (e) {}
+    return "default";
+  }
+
+  function setSelectedBiomeId(id) {
+    try {
+      if (id === "desert" || id === "default" || id === "ocean") storageSet(BIOME_STORAGE_KEY, id);
+    } catch (e) {}
+  }
+
+  // Entity lists: biomes declare which creatures/obstacles/powerUps they use; same implementation can be hot-swapped
+  var DefaultBiome = {
+    id: "default",
+    name: "Cave",
+    assetBasePath: "assets/audio",
+    creatures: ["slime", "bat", "crawler"],
+    obstacles: ["stalactite"],
+    powerUps: ["lavaBounce", "fireTotem"],
+    generateLevel: function (difficulty, seed, H) {
+      return generateDefaultLevelLayout(difficulty, seed, H);
+    }
+  };
+
+  // Desert biome constants
+  var DESERT_PLATFORM_BASE_Y = 280;
+  var CACTUS_W = 20;
+  var CACTUS_H = 36;
+  var CACTUS_NEEDLE_TRIGGER_DIST = 90;
+  var CACTUS_SHAKE_DURATION = 0.4;
+  var CACTUS_NEEDLE_COUNT = 4;
+  var NEEDLE_SPEED = 180;
+  var NEEDLE_R = 4;
+  var SCORPION_W = 22;
+  var SCORPION_H = 14;
+  var SCORPION_SPEED = 45;
+  var SCORPION_PATROL_MARGIN = 30;
+  var SCORPION_STEP_INTERVAL = 0.32;  // seconds between walk sounds
+  var BUZZARD_W = 26;
+  var BUZZARD_H = 18;
+  var BUZZARD_MAX_SPEED = 2.0 * REFERENCE_FPS;
+  var BUZZARD_WANDER_STRENGTH = 0.45 * REFERENCE_FPS;
+
+  var DESERT_MAX_JUMP_GAP = 220;
+  var DESERT_CANYON_EXTRA_MIN = 35;
+  var DESERT_CANYON_EXTRA_MAX = 95;
+
+  // Ocean biome constants
+  var OCEAN_SURFACE_Y = 40;       // approximate water surface (air above this)
+  var OCEAN_MID_Y = 200;         // mid-water band for most platforms
+  var OCEAN_FLOOR_Y = 320;       // ocean bed where floor platforms sit
+  var OCEAN_MAX_JUMP_GAP = 210;  // keep gaps reasonable with swim physics
+  var URCHIN_W = 18;
+  var URCHIN_H = 16;
+  var BARACUDA_W = 44;
+  var BARACUDA_H = 8;
+  var BARACUDA_BASE_SPEED = 1.6 * REFERENCE_FPS;
+  var BARACUDA_LUNGE_SPEED = 2.85 * REFERENCE_FPS;
+  /** Player must be within this range to build linger / enter lunge (px). */
+  var BARACUDA_AGGRO_RADIUS = 200;
+  /** Player beyond this range ends pursuit (px; > aggro for hysteresis). See biome-ocean.md. */
+  var BARACUDA_DEAGGRO_RADIUS = 305;
+  /** Seconds in aggro before lunge (tuning). */
+  var BARACUDA_LINGER_TO_LUNGE = 1.15;
+  /** Barracuda pursuit speed scale is compressed so Level 1 is easier and Level 30 isn't wildly faster. */
+  var BARACUDA_SPEED_SCALE_AT_L1 = 0.45;
+  var BARACUDA_SPEED_SCALE_AT_L30 = 0.52;
+  var JELLYFISH_W = 20;
+  var JELLYFISH_H = 22;
+  /** Bubble shaft pull zone half-width: wider than dragon + margin (see biome-ocean.md). */
+  var OCEAN_VENT_SHAFT_HALF_WIDTH = DRAGON_W * 0.65 + 24;
+  /** Vent column pull scale (see biome-ocean.md: ~half prior “debug strong” — must still reach hole). */
+  var OCEAN_VENT_PULL_MULT = 1.7;
+  /** Pixels above hole mouth over which vent pull ramps from weak → full (see biome-ocean.md). */
+  var OCEAN_VENT_DEPTH_BLEND_PX = 270;
+  /** Seagull swoop: accelerate toward player; max speed ramps gently with level (see biome-ocean.md). ~8× slower than early builds. */
+  var SEAGULL_SWOOP_ACCEL_L1 = 12;
+  var SEAGULL_SWOOP_ACCEL_L30 = 19;
+  var SEAGULL_SWOOP_MAX_SPEED_L1 = 6;
+  var SEAGULL_SWOOP_MAX_SPEED_L30 = 7.5;
+  /** Patrol: slow sky drift (sin amplitude scale × patrolW). */
+  var SEAGULL_PATROL_SIN_FREQ = 0.08;
+  var SEAGULL_PATROL_AMP_SCALE = 0.13;
+
+  function generateDesertLevelLayout(difficulty, seed, H) {
+    var rng = makeRng(seed);
+    var platforms = [];
+    var start = { x: 40, y: DESERT_PLATFORM_BASE_Y, w: 200, h: 16 };
+    platforms.push(start);
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var t = (dClamped - 1) / 29;
+    // Canyons: base gap scales with difficulty; extra "canyon" gaps make pits you can fall into
+    var baseGap = 85 + difficulty * 4;
+    var baseW = 140 + difficulty * 5;
+    var canyonChance = 0.08 + t * 0.22;
+    var cx = start.x + start.w + 50;
+    var cy = DESERT_PLATFORM_BASE_Y;
+    var worldHeight = H || WORLD_H;
+    var platCount = 16 + Math.floor(difficulty * 0.6);
+    for (var i = 0; i < platCount; i++) {
+      var gap = baseGap * rngRange(rng, 0.9, 1.2);
+      if (rng() < canyonChance) {
+        var extra = rngRange(rng, DESERT_CANYON_EXTRA_MIN + t * 40, DESERT_CANYON_EXTRA_MAX + t * 50);
+        gap = Math.min(gap + extra, DESERT_MAX_JUMP_GAP);
+      }
+      cx += gap;
+      if (cx > LEVEL_LENGTH - 200) break;
+      var wiggle = rngRange(rng, -14, 14);
+      var y = cy + wiggle;
+      var useLong = rng() < 0.3 + t * 0.25;
+      var w = useLong ? baseW * rngRange(rng, 1.6, 2.6) : baseW * rngRange(rng, 0.85, 1.25);
+      w = Math.min(w, LEVEL_LENGTH - cx - 80);
+      if (w < 50) continue;
+      platforms.push({ x: cx, y: y, w: w, h: 16 });
+      cy = cy * 0.7 + y * 0.3;
+    }
+    var last = platforms[platforms.length - 1];
+    worldHeight = computeWorldHeightFromPlatforms(platforms);
+    var goalX = Math.min(LEVEL_LENGTH - 100, last.x + last.w + 70);
+    var goalY = last.y - 20;
+    var goal = { x: goalX, y: goalY, w: 50, h: 80 };
+    var worldMinY = Math.min(0, DESERT_PLATFORM_BASE_Y - 150);
+    var worldMaxY = worldHeight;
+
+    var options = { platforms: platforms, difficulty: dClamped, seed: seed, H: worldHeight, worldMinY: worldMinY, layout: {} };
+    var genLayout = runBiomeGenerators(DesertBiome, options);
+    var cactusDefs = genLayout.cactusDefs || [];
+
+    var items = generateLavaBounceItem(seed + 888, worldHeight, platforms)
+      .concat(generateFireTotemItem(seed + 999, worldHeight, platforms))
+      .concat(generateChompItem(seed + 777, worldHeight, platforms));
+    var checkpoints = generateCheckpoints(platforms, [], seed + 111, { stalactiteDefs: [], cactusDefs: cactusDefs });
+    var dots = generateDots(platforms, seed + 444, goal, [], [], cactusDefs, []);
+
+    return {
+      platforms: platforms,
+      goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      ceilingPoints: [],
+      stalactites: [],
+      bats: [],
+      slimes: [],
+      crawlers: [],
+      cactusDefs: cactusDefs,
+      scorpionDefs: genLayout.scorpionDefs || [],
+      buzzardDefs: genLayout.buzzardDefs || [],
+      items: items,
+      dots: dots,
+      checkpoints: checkpoints
+    };
+  }
+
+  function generateOceanLevelLayout(difficulty, seed, H) {
+    var rng = makeRng(seed);
+    var platforms = [];
+
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var t = (dClamped - 1) / 29;
+
+    var start = { x: 40, y: OCEAN_MID_Y, w: 160, h: 14, isCoral: true };
+    platforms.push(start);
+
+    var baseGap = 105 + difficulty * 4;
+    var baseW = 100 + difficulty * 3;
+    var cx = start.x + start.w + 85;
+    var cy = OCEAN_MID_Y;
+    var platCount = 11 + Math.floor(difficulty * 0.45);
+    platCount = Math.min(platCount, 18);
+
+    for (var i = 0; i < platCount; i++) {
+      var gap = baseGap * rngRange(rng, 1.0, 1.35);
+      cx += gap;
+      if (cx > LEVEL_LENGTH - 200) break;
+
+      var useLong = rng() < 0.28 + t * 0.22;
+      var w = useLong
+        ? baseW * rngRange(rng, 1.5, 2.2)
+        : baseW * rngRange(rng, 0.9, 1.35);
+      w = Math.min(w, LEVEL_LENGTH - cx - 80);
+      if (w < 55) continue;
+
+      var bandRoll = rng();
+      var targetY;
+      if (bandRoll < 0.25) {
+        targetY = OCEAN_SURFACE_Y + rngRange(rng, 55, 100);
+      } else if (bandRoll > 0.72) {
+        targetY = OCEAN_FLOOR_Y - rngRange(rng, 75, 115);
+      } else {
+        targetY = OCEAN_MID_Y + rngRange(rng, -50, 50);
+      }
+      var y = cy * 0.45 + targetY * 0.55 + rngRange(rng, -28, 28);
+      y = Math.max(OCEAN_SURFACE_Y + 45, Math.min(OCEAN_FLOOR_Y - 65, y));
+
+      platforms.push({ x: cx, y: y, w: w, h: 14, isCoral: true });
+      cy = y;
+    }
+
+    var floorY = OCEAN_FLOOR_Y;
+    var fx = -20;
+    while (fx < LEVEL_LENGTH) {
+      var fw = 200 + rng() * 120;
+      if (rng() < 0.2 + t * 0.08) {
+        fx += 100 + rng() * 120;
+        continue;
+      }
+      if (fx + fw > LEVEL_LENGTH + 40) fw = LEVEL_LENGTH + 40 - fx;
+      if (fw > 40) {
+        platforms.push({ x: fx, y: floorY, w: fw, h: 16, isFloor: true });
+      }
+      fx += fw - 35;
+    }
+
+    // Compute world bounds from platforms.
+    var minPlatY = Infinity;
+    var maxPlatBottom = 0;
+    for (var pi = 0; pi < platforms.length; pi++) {
+      var p = platforms[pi];
+      if (!p) continue;
+      if (p.y < minPlatY) minPlatY = p.y;
+      var bottom = p.y + (p.h || 16);
+      if (bottom > maxPlatBottom) maxPlatBottom = bottom;
+    }
+    if (!isFinite(minPlatY)) minPlatY = OCEAN_MID_Y;
+    var worldHeight = Math.max(maxPlatBottom + 100, H || WORLD_H);
+    var worldMinY = Math.min(OCEAN_SURFACE_Y - 120, minPlatY - 160);
+    var worldMaxY = worldHeight;
+    var waterSurfaceY = OCEAN_SURFACE_Y;
+    var seagullDefs = generateSeagullDefs(dClamped, seed, waterSurfaceY, worldMinY);
+
+    // Goal near the right side, a bit above mid-water so you have to swim up.
+    var last = platforms[0];
+    for (var li = 0; li < platforms.length; li++) {
+      if (!platforms[li] || platforms[li].isFloor) continue;
+      if (!last || platforms[li].x > last.x) last = platforms[li];
+    }
+    var goalX = Math.min(LEVEL_LENGTH - 100, (last ? last.x + last.w + 80 : LEVEL_LENGTH - 150));
+    var goalY = last ? Math.max(waterSurfaceY + 60, Math.min(last.y - 30, worldMaxY - 140)) : (OCEAN_MID_Y - 40);
+    var goal = { x: goalX, y: goalY, w: 50, h: 80 };
+
+    var options = {
+      platforms: platforms,
+      difficulty: dClamped,
+      seed: seed,
+      H: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      layout: { waterSurfaceY: waterSurfaceY }
+    };
+    var genLayout = runBiomeGenerators(OceanBiome, options);
+
+    var items = generateAirCanisterItems(seed + 888, dClamped, platforms, waterSurfaceY, floorY);
+
+    var checkpoints = generateCheckpoints(platforms, [], seed + 111, { stalactiteDefs: [], cactusDefs: [] });
+    var dots = generateDots(platforms, seed + 444, goal, [], [], [], []);
+
+    return {
+      platforms: platforms,
+      goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      ceilingPoints: [],
+      stalactites: [],
+      bats: [],
+      slimes: [],
+      crawlers: [],
+      items: items,
+      dots: dots,
+      checkpoints: checkpoints,
+      ventDefs: genLayout.ventDefs || [],
+      urchinDefs: genLayout.urchinDefs || [],
+      baracudaDefs: genLayout.baracudaDefs || [],
+      jellyfishDefs: genLayout.jellyfishDefs || [],
+      seagullDefs: seagullDefs,
+      waterSurfaceY: waterSurfaceY
+    };
+  }
+
+  var DesertBiome = {
+    id: "desert",
+    name: "Desert",
+    assetBasePath: "assets/biomes/desert/audio",
+    creatures: ["scorpion", "buzzard"],
+    obstacles: ["cactus"],
+    powerUps: ["lavaBounce", "fireTotem", "chomp"],
+    generateLevel: function (difficulty, seed, H) {
+      return generateDesertLevelLayout(difficulty, seed, H);
+    }
+  };
+
+  var OceanBiome = {
+    id: "ocean",
+    name: "Ocean",
+    assetBasePath: "assets/biomes/ocean/audio",
+    creatures: ["baracuda", "jellyfish"],
+    obstacles: ["vent", "urchin"],
+    powerUps: ["airCanister"],
+    generateLevel: function (difficulty, seed, H) {
+      return generateOceanLevelLayout(difficulty, seed, H);
+    }
+  };
+
+  var BIOMES = { default: DefaultBiome, desert: DesertBiome, ocean: OceanBiome };
+
+  // Creature/obstacle generators: (options) -> defs; options = { platforms, difficulty, seed, H, layout }
+  function generateScorpionDefs(platforms, difficulty, seed) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var scorpRng = makeRng(seed);
+    var scorpCount = 2 + Math.floor(dClamped / 6);
+    var defs = [];
+    for (var si = 0; si < scorpCount; si++) {
+      var platIdx = 1 + Math.floor(scorpRng() * (platforms.length - 2));
+      var sp = platforms[platIdx];
+      if (!sp) continue;
+      var left = sp.x + SCORPION_PATROL_MARGIN;
+      var right = sp.x + sp.w - SCORPION_PATROL_MARGIN;
+      if (right - left < 40) continue;
+      defs.push({
+        platformIndex: platIdx,
+        startX: left + scorpRng() * (right - left - 40),
+        left: left,
+        right: right,
+        direction: scorpRng() < 0.5 ? 1 : -1
+      });
+    }
+    return defs;
+  }
+  function generateBuzzardDefs(difficulty, seed, H) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var buzzRng = makeRng(seed);
+    var buzzCount = 1 + Math.floor(dClamped / 10);
+    var worldHeight = H || WORLD_H;
+    var defs = [];
+    for (var bi = 0; bi < buzzCount; bi++) {
+      defs.push({
+        x: rngRange(buzzRng, 200, LEVEL_LENGTH - 200),
+        y: rngRange(buzzRng, 60, worldHeight - 180),
+        rngSeed: seed + 1000 + bi
+      });
+    }
+    return defs;
+  }
+  function generateBaracudaDefs(difficulty, seed, H, worldMinY, worldMaxY, waterSurfaceY) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var rng = makeRng(seed);
+    var count = 2 + Math.floor(dClamped / 8);
+    var worldHeight = H || WORLD_H;
+    var surfaceY = typeof waterSurfaceY === "number" ? waterSurfaceY : (worldMinY != null ? worldMinY + 60 : 80);
+    var minY = surfaceY + 60;
+    var maxY = (worldMaxY != null ? worldMaxY : worldHeight) - 80;
+    var defs = [];
+    for (var bi = 0; bi < count; bi++) {
+      defs.push({
+        x: rngRange(rng, 220, LEVEL_LENGTH - 260),
+        y: rngRange(rng, minY, maxY),
+        rngSeed: seed + 5000 + bi
+      });
+    }
+    return defs;
+  }
+  function generateJellyfishDefs(difficulty, seed, H, worldMinY, worldMaxY, waterSurfaceY) {
+    var dClamped = Math.max(1, Math.min(30, difficulty));
+    var rng = makeRng(seed);
+    var count = 3 + Math.floor(dClamped / 6);
+    var worldHeight = H || WORLD_H;
+    var surfaceY = typeof waterSurfaceY === "number" ? waterSurfaceY : (worldMinY != null ? worldMinY + 60 : 80);
+    var minY = surfaceY + 80;
+    var maxY = (worldMaxY != null ? worldMaxY : worldHeight) - 60;
+    var defs = [];
+    for (var ji = 0; ji < count; ji++) {
+      defs.push({
+        x: rngRange(rng, 180, LEVEL_LENGTH - 220),
+        y: rngRange(rng, minY, maxY),
+        vertical: rng() < 0.6,
+        amplitude: rngRange(rng, 30, 80),
+        periodSec: rngRange(rng, 2.5, 5.0),
+        rngSeed: seed + 6000 + ji
+      });
+    }
+    return defs;
+  }
+  function generateCactusDefs(platforms, seed) {
+    var cactiRng = makeRng(seed);
+    var defs = [];
+    for (var pi = 1; pi < platforms.length - 1; pi++) {
+      var plat = platforms[pi];
+      if (!plat || plat.w < 50) continue;
+      var numCacti = cactiRng() < 0.5 ? 0 : (cactiRng() < 0.7 ? 1 : 2);
+      for (var nc = 0; nc < numCacti; nc++) {
+        var offset = 0.15 + cactiRng() * 0.7;
+        var variety = Math.floor(cactiRng() * 3);
+        defs.push({ platformIndex: pi, offset: offset, variety: variety });
+      }
+    }
+    return defs;
+  }
+
+  var CREATURE_GENERATORS = {
+    slime: function (op) { return generateSlimesForPlatforms(op.platforms, op.difficulty, (op.seed || 0) + 999); },
+    bat: function (op) { return generateBats(op.difficulty, (op.seed || 0) + 777, op.H); },
+    crawler: function (op) { return generateCrawlers(op.platforms, op.layout.slimes || [], op.difficulty, (op.seed || 0) + 555); },
+    scorpion: function (op) { return generateScorpionDefs(op.platforms, op.difficulty, (op.seed || 0) + 3000); },
+    buzzard: function (op) { return generateBuzzardDefs(op.difficulty, (op.seed || 0) + 4000, op.H); },
+    baracuda: function (op) {
+      var ws = op.layout && typeof op.layout.waterSurfaceY === "number" ? op.layout.waterSurfaceY : null;
+      return generateBaracudaDefs(op.difficulty, (op.seed || 0) + 5000, op.H, op.worldMinY, op.worldMaxY, ws);
+    },
+    jellyfish: function (op) {
+      var ws = op.layout && typeof op.layout.waterSurfaceY === "number" ? op.layout.waterSurfaceY : null;
+      return generateJellyfishDefs(op.difficulty, (op.seed || 0) + 6000, op.H, op.worldMinY, op.worldMaxY, ws);
+    }
+  };
+  var OBSTACLE_GENERATORS = {
+    stalactite: function (op) {
+      var cave = generateCeilingAndStalactites(op.difficulty, (op.seed || 0) + 321, op.platforms, op.H, op.worldMinY);
+      return { ceilingPoints: cave.ceilingPoints, stalactites: cave.stalactites };
+    },
+    cactus: function (op) { return { cactusDefs: generateCactusDefs(op.platforms, (op.seed || 0) + 2000) }; },
+    vent: function (op) {
+      // Place vents on a subset of floor platforms.
+      var rng = makeRng((op.seed || 0) + 7000);
+      var ventDefs = [];
+      var platforms = op.platforms || [];
+      for (var i = 0; i < platforms.length; i++) {
+        var p = platforms[i];
+        if (!p || !p.isFloor) continue;
+        if (rng() < 0.5) continue;
+        var holes = 1 + (rng() < 0.35 ? 1 : 0);
+        for (var h = 0; h < holes; h++) {
+          var offset = 0.1 + rng() * 0.8;
+          ventDefs.push({ platformIndex: i, offset: offset });
+        }
+      }
+      return { ventDefs: ventDefs };
+    },
+    urchin: function (op) {
+      // Place sea urchins on floor platforms and some mid-level structures.
+      var rng = makeRng((op.seed || 0) + 7100);
+      var urchinDefs = [];
+      var platforms = op.platforms || [];
+      for (var i = 0; i < platforms.length; i++) {
+        var p = platforms[i];
+        if (!p || !p.w) continue;
+        var isFloor = !!p.isFloor;
+        var placeChance = isFloor ? 0.7 : 0.2;
+        if (rng() > placeChance) continue;
+        var count = isFloor ? (rng() < 0.5 ? 1 : 2) : 1;
+        for (var u = 0; u < count; u++) {
+          var offset = 0.1 + rng() * 0.8;
+          urchinDefs.push({ platformIndex: i, offset: offset });
+        }
+      }
+      return { urchinDefs: urchinDefs };
+    }
+  };
+  var CREATURE_LAYOUT_KEY = {
+    slime: "slimes",
+    bat: "bats",
+    crawler: "crawlers",
+    scorpion: "scorpionDefs",
+    buzzard: "buzzardDefs",
+    baracuda: "baracudaDefs",
+    jellyfish: "jellyfishDefs"
+  };
+
+  function runBiomeGenerators(biome, options) {
+    var layout = options.layout || {};
+    options.layout = layout;
+    var o;
+    for (o = 0; o < biome.obstacles.length; o++) {
+      var obstType = biome.obstacles[o];
+      if (OBSTACLE_GENERATORS[obstType]) {
+        var r = OBSTACLE_GENERATORS[obstType](options);
+        for (var key in r) layout[key] = r[key];
+      }
+    }
+    for (o = 0; o < biome.creatures.length; o++) {
+      var creatType = biome.creatures[o];
+      if (CREATURE_GENERATORS[creatType]) {
+        var layoutKey = CREATURE_LAYOUT_KEY[creatType] || creatType + "Defs";
+        layout[layoutKey] = CREATURE_GENERATORS[creatType](options);
+      }
+    }
+    return layout;
+  }
+
+  // --- Score (difficulty-scaled; stored per level per user)
+  var POINTS_DOT = 10;
+  var POINTS_KILL = 25;
+  var POINTS_POWERUP = 50;
+  var POINTS_WIN = 100;
+  var SCORE_DIFFICULTY_FACTOR = 0.08;  // per difficulty step: mult = 1 + (diff - 1) * this
+
+  // --- Storage
+  var LEVELS_STORAGE_KEY = "dragonLevels";
+  var PROFILE_STORAGE_KEY = "dragonProfile";
+  var AUDIO_STORAGE_KEY = "dragonAudio";
+  var DIFFICULTY_STORAGE_KEY = "dragonDifficulty";
+  var SCORES_STORAGE_KEY = "dragonScores";
+  var DEFAULT_LEVELS = [
+    { id: "pack-01", name: "1 Lava Warmup", difficulty: 1, seed: 101 },
+    { id: "pack-02", name: "2 Baby Dragon Steps", difficulty: 2, seed: 102 },
+    { id: "pack-03", name: "3 Hot Coals Hop", difficulty: 3, seed: 103 },
+    { id: "pack-04", name: "4 Bridge of Embers", difficulty: 4, seed: 104 },
+    { id: "pack-05", name: "5 Molten Alley", difficulty: 5, seed: 105 },
+    { id: "pack-06", name: "6 Ember Staircase", difficulty: 6, seed: 106 },
+    { id: "pack-07", name: "7 Blistering Boulevard", difficulty: 7, seed: 107 },
+    { id: "pack-08", name: "8 Smoldering Switchbacks", difficulty: 8, seed: 108 },
+    { id: "pack-09", name: "9 Charred Cliffs", difficulty: 9, seed: 109 },
+    { id: "pack-10", name: "10 Ashen Arches", difficulty: 10, seed: 110 },
+    { id: "pack-11", name: "11 Scorched Skyline", difficulty: 11, seed: 111 },
+    { id: "pack-12", name: "12 Inferno Interval", difficulty: 12, seed: 112 },
+    { id: "pack-13", name: "13 Dragon's Gauntlet", difficulty: 13, seed: 113 },
+    { id: "pack-14", name: "14 Volcanic Vertigo", difficulty: 14, seed: 114 },
+    { id: "pack-15", name: "15 Lava Lanes", difficulty: 15, seed: 115 },
+    { id: "pack-16", name: "16 Pyro Plateau", difficulty: 16, seed: 116 },
+    { id: "pack-17", name: "17 Magma Maze", difficulty: 17, seed: 117 },
+    { id: "pack-18", name: "18 Searing Spires", difficulty: 18, seed: 118 },
+    { id: "pack-19", name: "19 Cinder City", difficulty: 19, seed: 119 },
+    { id: "pack-20", name: "20 Firefall Freeway", difficulty: 20, seed: 120 },
+    { id: "pack-21", name: "21 Blaze Bridges", difficulty: 21, seed: 121 },
+    { id: "pack-22", name: "22 Furnace Free Climb", difficulty: 22, seed: 122 },
+    { id: "pack-23", name: "23 Hellmouth Highway", difficulty: 23, seed: 123 },
+    { id: "pack-24", name: "24 Overheated Overhangs", difficulty: 24, seed: 124 },
+    { id: "pack-25", name: "25 Phoenix Pathway", difficulty: 25, seed: 125 },
+    { id: "pack-26", name: "26 Dragonflight Drill", difficulty: 26, seed: 126 },
+    { id: "pack-27", name: "27 Lava Labyrinth", difficulty: 27, seed: 127 },
+    { id: "pack-28", name: "28 Skyfire Straits", difficulty: 28, seed: 128 },
+    { id: "pack-29", name: "29 Meltdown Marathon", difficulty: 29, seed: 129 },
+    { id: "pack-30", name: "30 Apocalypse Apex", difficulty: 30, seed: 130 }
+  ];
+
+  function loadProfile() {
+    try {
+      var raw = storageGet(PROFILE_STORAGE_KEY);
+      if (!raw) return { username: "", runs: [] };
+      var data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return { username: "", runs: [] };
+      if (typeof data.username !== "string") data.username = "";
+      if (!Array.isArray(data.runs)) data.runs = [];
+      return data;
+    } catch (e) {
+      return { username: "", runs: [] };
+    }
+  }
+
+  function saveProfile(profile) {
+    try {
+      storageSet(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    } catch (e) {
+      // ignore storage errors in local/offline mode
+    }
+  }
+
+  function getProfileUsername() {
+    var p = loadProfile();
+    return p.username || "";
+  }
+
+  function getScoreUserId() {
+    var u = getProfileUsername();
+    return (u && String(u).trim()) ? String(u).trim() : "anonymous";
+  }
+
+  function loadScores() {
+    try {
+      var raw = storageGet(SCORES_STORAGE_KEY);
+      if (!raw) return {};
+      var data = JSON.parse(raw);
+      return data && typeof data === "object" ? data : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveScores(data) {
+    try {
+      storageSet(SCORES_STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {}
+  }
+
+  function pushScoreForLevel(levelId, userId, score, timeSeconds) {
+    var data = loadScores();
+    if (!levelId) return;
+    if (!data[levelId]) data[levelId] = {};
+    if (!Array.isArray(data[levelId][userId])) data[levelId][userId] = [];
+    data[levelId][userId].push({ score: score, time: typeof timeSeconds === "number" ? timeSeconds : 0 });
+    saveScores(data);
+  }
+
+  function getBestScoreForLevel(levelId, userId) {
+    var data = loadScores();
+    if (!levelId || !data[levelId] || !Array.isArray(data[levelId][userId]) || !data[levelId][userId].length) return 0;
+    var arr = data[levelId][userId];
+    var best = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var s = typeof arr[i] === "object" && arr[i] != null ? arr[i].score : arr[i];
+      if (s > best) best = s;
+    }
+    return best;
+  }
+
+  function getLevelLeaderboard(levelId) {
+    var data = loadScores();
+    if (!levelId || !data[levelId]) return [];
+    var list = [];
+    for (var uid in data[levelId]) {
+      if (!Object.prototype.hasOwnProperty.call(data[levelId], uid)) continue;
+      var runs = data[levelId][uid];
+      if (!Array.isArray(runs)) continue;
+      for (var r = 0; r < runs.length; r++) {
+        var run = runs[r];
+        var score = typeof run === "object" && run != null ? run.score : run;
+        var time = typeof run === "object" && run != null && typeof run.time === "number" ? run.time : 0;
+        list.push({ userId: uid, score: score, time: time });
+      }
+    }
+    list.sort(function (a, b) { return b.score - a.score; });
+    return list;
+  }
+
+  function setProfileUsername(name) {
+    var p = loadProfile();
+    p.username = name || "";
+    saveProfile(p);
+  }
+
+  function appendProfileRun(run) {
+    var p = loadProfile();
+    if (!Array.isArray(p.runs)) p.runs = [];
+    p.runs.push(run);
+    if (p.runs.length > 500) {
+      p.runs = p.runs.slice(p.runs.length - 500);
+    }
+    saveProfile(p);
+  }
+
+  // --- Audio settings (SFX / music toggles)
+  function loadAudioSettings() {
+    try {
+      var raw = storageGet(AUDIO_STORAGE_KEY);
+      if (!raw) return { sfx: true, music: true };
+      var data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return { sfx: true, music: true };
+      if (typeof data.sfx !== "boolean") data.sfx = true;
+      if (typeof data.music !== "boolean") data.music = true;
+      return data;
+    } catch (e) {
+      return { sfx: true, music: true };
+    }
+  }
+
+  function saveAudioSettings(settings) {
+    try {
+      storageSet(AUDIO_STORAGE_KEY, JSON.stringify(settings));
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function isSfxEnabled() {
+    var s = loadAudioSettings();
+    return s.sfx !== false;
+  }
+
+  function isMusicEnabled() {
+    var s = loadAudioSettings();
+    return s.music !== false;
+  }
+
+  function setSfxEnabled(enabled) {
+    var s = loadAudioSettings();
+    s.sfx = !!enabled;
+    saveAudioSettings(s);
+  }
+
+  function setMusicEnabled(enabled) {
+    var s = loadAudioSettings();
+    s.music = !!enabled;
+    saveAudioSettings(s);
+  }
+
+  // --- Difficulty setting (dropdown: "random" or 1-30)
+  function loadDifficultySetting() {
+    try {
+      var raw = storageGet(DIFFICULTY_STORAGE_KEY);
+      if (!raw) return "1";
+      var v = JSON.parse(raw);
+      if (v === "random") return "random";
+      var n = parseInt(v, 10);
+      if (!n || n < 1 || n > 30) return "1";
+      return String(n);
+    } catch (e) {
+      return "1";
+    }
+  }
+
+  function saveDifficultySetting(value) {
+    try {
+      storageSet(DIFFICULTY_STORAGE_KEY, JSON.stringify(value));
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function getSelectedDifficultyValue() {
+    var sel = document.getElementById("difficultySelect");
+    if (!sel) return loadDifficultySetting();
+    return sel.value || loadDifficultySetting();
+  }
+
+  function ensureDefaultLevelsSeeded(data, H) {
+    if (!data || !Array.isArray(data.levels)) data = { levels: [] };
+    var changed = false;
+    DEFAULT_LEVELS.forEach(function (meta) {
+      var lvl = data.levels.find(function (l) { return l.id === meta.id; });
+      if (!lvl) {
+        var layout = generateDefaultLevelLayout(meta.difficulty, meta.seed, H);
+        data.levels.push({
+          id: meta.id,
+          name: meta.name,
+          biomeId: "default",
+          platforms: layout.platforms,
+          goal: layout.goal,
+          worldHeight: layout.worldHeight,
+          worldMinY: layout.worldMinY,
+          worldMaxY: layout.worldMaxY,
+          bestScore: Infinity,
+          bestDots: 0,
+          difficulty: meta.difficulty,
+          slimes: layout.slimes,
+          ceiling: layout.ceilingPoints,
+          stalactites: layout.stalactites,
+          bats: layout.bats,
+          items: layout.items,
+          dots: layout.dots,
+          checkpoints: layout.checkpoints,
+          crawlers: layout.crawlers
+        });
+        changed = true;
+      } else {
+        if (typeof lvl.bestScore !== "number" || !isFinite(lvl.bestScore)) { lvl.bestScore = Infinity; changed = true; }
+        if (typeof lvl.bestDots !== "number" || lvl.bestDots < 0) { lvl.bestDots = 0; changed = true; }
+        if (lvl.difficulty == null) { lvl.difficulty = meta.difficulty; changed = true; }
+        if (!Array.isArray(lvl.slimes)) {
+          lvl.slimes = generateSlimesForPlatforms(lvl.platforms, lvl.difficulty || meta.difficulty, meta.seed + 999);
+          changed = true;
+        }
+        var lvlH = lvl.worldHeight || computeWorldHeightFromPlatforms(lvl.platforms) || H;
+        if (!Array.isArray(lvl.ceiling) || !Array.isArray(lvl.stalactites)) {
+          var cave = generateCeilingAndStalactites(lvl.difficulty || meta.difficulty, meta.seed + 321, lvl.platforms, lvlH);
+          lvl.ceiling = cave.ceilingPoints;
+          lvl.stalactites = cave.stalactites;
+          changed = true;
+        }
+        if (lvl.worldHeight == null) { lvl.worldHeight = lvlH; changed = true; }
+        if (!Array.isArray(lvl.bats)) {
+          lvl.bats = generateBats(lvl.difficulty || meta.difficulty, meta.seed + 777, lvlH);
+          changed = true;
+        }
+        if (!Array.isArray(lvl.items)) lvl.items = [];
+        if (lvl.biomeId !== "ocean" && !lvl.items.some(function (i) { return i && i.type === "lavaBounce"; })) {
+          lvl.items = lvl.items.concat(generateLavaBounceItem(meta.seed + 888, lvlH, lvl.platforms));
+          changed = true;
+        }
+        if (lvl.biomeId !== "ocean" && !lvl.items.some(function (i) { return i && i.type === "fireTotem"; })) {
+          lvl.items = lvl.items.concat(generateFireTotemItem(meta.seed + 999, lvlH, lvl.platforms));
+          changed = true;
+        }
+        if (!Array.isArray(lvl.dots) || lvl.dots.length !== NUM_DOTS) {
+          lvl.dots = generateDots(lvl.platforms || [], meta.seed + 444, lvl.goal, lvl.slimes || [], lvl.crawlers || [], lvl.cactusDefs || [], lvl.stalactites || []);
+          changed = true;
+        }
+        if (!Array.isArray(lvl.checkpoints)) {
+          lvl.checkpoints = generateCheckpoints(lvl.platforms, lvl.slimes || [], meta.seed + 111, { stalactiteDefs: lvl.stalactites || [], cactusDefs: lvl.cactusDefs || [] });
+          changed = true;
+        }
+        if (!Array.isArray(lvl.crawlers) || lvl.crawlers.length === 0) {
+          lvl.crawlers = generateCrawlers(lvl.platforms, lvl.slimes || [], lvl.difficulty || meta.difficulty, meta.seed + 555);
+          changed = true;
+        }
+        var anyBent = Array.isArray(lvl.platforms) && lvl.platforms.some(function (p) { return p && p.bend; });
+        if (Array.isArray(lvl.platforms) && !anyBent) {
+          var d = lvl.difficulty != null ? lvl.difficulty : meta.difficulty;
+          var dClamped = Math.max(1, Math.min(30, d));
+          var bendChance = 0.1 + 0.6 * ((dClamped - 1) / 29);
+          var rng = makeRng(meta.seed + 555);
+          lvl.platforms.forEach(function (p, index) {
+            if (!p || index === 0 || p.bend) return;
+            if (rng() >= bendChance) return;
+            p.bend = {
+              joint: 0.25 + rng() * 0.5,
+              bendHeight: (rng() < 0.5 ? -1 : 1) * (6 + rng() * 8)
+            };
+          });
+          changed = true;
+        }
+      }
+    });
+    if (Array.isArray(data.levels)) {
+      data.levels.forEach(function (lvl) {
+        if (!lvl || lvl.biomeId !== "ocean" || !Array.isArray(lvl.items)) return;
+        var filtered = lvl.items.filter(function (i) { return !i || (i.type !== "fireTotem" && i.type !== "lavaBounce"); });
+        if (filtered.length !== lvl.items.length) {
+          lvl.items = filtered;
+          changed = true;
+        }
+        var dOcean = lvl.difficulty != null ? Math.max(1, Math.min(30, lvl.difficulty)) : 15;
+        if (!lvl.items.some(function (i) { return i && i.type === "airCanister"; })) {
+          lvl.items = lvl.items.concat(generateAirCanisterItems(888, dOcean, lvl.platforms || [], OCEAN_SURFACE_Y, OCEAN_FLOOR_Y));
+          changed = true;
+        }
+      });
+    }
+    if (changed) saveAllLevels(data);
+    return data;
+  }
+
+  function loadAllLevels(H) {
+    H = H || WORLD_H;
+    var data;
+    try {
+      var raw = storageGet(LEVELS_STORAGE_KEY);
+      data = !raw ? { levels: [] } : JSON.parse(raw);
+      if (!data || !Array.isArray(data.levels)) data = { levels: [] };
+    } catch (e) {
+      data = { levels: [] };
+    }
+    return ensureDefaultLevelsSeeded(data, H);
+  }
+
+  function saveAllLevels(data) {
+    storageSet(LEVELS_STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function saveCompletedLevel(levelID, name, platforms, goal, bestScore, dotsCollected, levelState, onSaved) {
+    var data = loadAllLevels(levelState.H);
+    var existing = data.levels.find(function (l) { return l.id === levelID; });
+    var dots = typeof dotsCollected === "number" ? dotsCollected : 0;
+    if (existing) {
+      if (typeof existing.bestScore !== "number" || !isFinite(existing.bestScore)) existing.bestScore = Infinity;
+      if (bestScore < existing.bestScore) { existing.bestScore = bestScore; saveAllLevels(data); }
+      if (dots > (existing.bestDots || 0)) { existing.bestDots = dots; saveAllLevels(data); }
+      return;
+    }
+    var dotDefs = levelState.dotDefs.length === NUM_DOTS
+      ? levelState.dotDefs
+      : generateDots(platforms, (levelState.currentLevelSeed || 0) + 444, goal, levelState.slimeDefs || [], levelState.crawlerDefs || [], levelState.cactusDefs || [], levelState.stalactiteDefs || []);
+    var biomeId = (levelState.biomeId === "desert" || levelState.biomeId === "ocean") ? levelState.biomeId : "default";
+    var toPush = {
+      id: levelID,
+      name: name,
+      biomeId: biomeId,
+      platforms: platforms,
+      goal: goal,
+      worldHeight: levelState.H,
+      worldMinY: levelState.worldMinY,
+      worldMaxY: levelState.worldMaxY,
+      bestScore: bestScore,
+      bestDots: dots,
+      difficulty: levelState.currentDifficulty,
+      slimes: levelState.slimeDefs || [],
+      ceiling: levelState.ceilingPoints || [],
+      stalactites: levelState.stalactiteDefs || [],
+      bats: levelState.batDefs || [],
+      items: levelState.itemDefs || [],
+      dots: dotDefs,
+      checkpoints: levelState.checkpointDefs || [],
+      crawlers: levelState.crawlerDefs || [],
+      cactusDefs: levelState.cactusDefs || [],
+      scorpionDefs: levelState.scorpionDefs || [],
+      buzzardDefs: levelState.buzzardDefs || [],
+      ventDefs: levelState.ventDefs || [],
+      urchinDefs: levelState.urchinDefs || [],
+      baracudaDefs: levelState.baracudaDefs || [],
+      jellyfishDefs: levelState.jellyfishDefs || [],
+      seagullDefs: levelState.seagullDefs || [],
+      waterSurfaceY: levelState.waterSurfaceY != null ? levelState.waterSurfaceY : null
+    };
+    data.levels.push(toPush);
+    saveAllLevels(data);
+    if (typeof onSaved === "function") onSaved();
+  }
+
+  // --- Global input and level data (set by UI, read by scene)
+  window.__dragonKeys = { left: false, right: false, jump: false, boost: false, breath: false, down: false };
+  window.__dragonJumpKeyReleased = true;
+  window.__dragonBreathKeyConsumed = false;
+  window.__dragonLevelData = null;
+  window.__dragonPopulateLevelDropdown = null;
+
+  function buildLevelDataForNewSeed(seed, difficulty, biomeId) {
+    difficulty = difficulty != null ? Math.max(1, Math.min(30, difficulty)) : 15;
+    seed = Math.floor(Number(seed)) || 0;
+    if (seed <= 0) return null;
+    biomeId = biomeId || getSelectedBiomeId();
+    var biome = BIOMES[biomeId] || DefaultBiome;
+    var layout = biome.generateLevel(difficulty, seed, WORLD_H);
+    return buildLevelDataFromLayout(layout, {
+      currentLevelID: "seed-" + seed,
+      currentLevelSeed: seed,
+      currentDifficulty: difficulty,
+      bestScore: Infinity,
+      biomeId: biomeId
+    });
+  }
+
+  function buildLevelDataForRandom(biomeId) {
+    var difficulty = Math.floor(Math.random() * (23 - 8 + 1) + 8);
+    var seed = Math.floor(Math.random() * 1e9);
+    biomeId = biomeId || getSelectedBiomeId();
+    var biome = BIOMES[biomeId] || DefaultBiome;
+    var layout = biome.generateLevel(difficulty, seed, WORLD_H);
+    return buildLevelDataFromLayout(layout, {
+      currentLevelID: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "rand-" + seed,
+      currentLevelSeed: seed,
+      currentDifficulty: difficulty,
+      bestScore: Infinity,
+      biomeId: biomeId
+    });
+  }
+
+  function buildLevelDataFromLayout(layout, meta) {
+    var data = {
+      currentLevelID: meta.currentLevelID,
+      currentLevelSeed: meta.currentLevelSeed,
+      currentDifficulty: meta.currentDifficulty,
+      bestScore: meta.bestScore != null ? meta.bestScore : Infinity,
+      biomeId: meta.biomeId || "default",
+      platforms: layout.platforms,
+      goal: layout.goal,
+      worldHeight: layout.worldHeight,
+      worldMinY: layout.worldMinY,
+      worldMaxY: layout.worldMaxY,
+      slimeDefs: layout.slimes || [],
+      ceilingPoints: layout.ceilingPoints || [],
+      stalactiteDefs: layout.stalactites || [],
+      batDefs: layout.bats || [],
+      itemDefs: layout.items || [],
+      dotDefs: layout.dots || [],
+      checkpointDefs: layout.checkpoints || [],
+      crawlerDefs: layout.crawlers || [],
+      cactusDefs: layout.cactusDefs || [],
+      scorpionDefs: layout.scorpionDefs || [],
+      buzzardDefs: layout.buzzardDefs || [],
+      ventDefs: layout.ventDefs || [],
+      urchinDefs: layout.urchinDefs || [],
+      baracudaDefs: layout.baracudaDefs || [],
+      jellyfishDefs: layout.jellyfishDefs || [],
+      seagullDefs: layout.seagullDefs || [],
+      waterSurfaceY: layout.waterSurfaceY != null ? layout.waterSurfaceY : null
+    };
+    return data;
+  }
+
+  function buildLevelDataFromStored(level) {
+    var platforms = JSON.parse(JSON.stringify(level.platforms));
+    var goal = JSON.parse(JSON.stringify(level.goal));
+    var worldHeight = level.worldHeight || computeWorldHeightFromPlatforms(platforms);
+    var worldMinY = level.worldMinY != null ? level.worldMinY : 0;
+    var worldMaxY = level.worldMaxY != null ? level.worldMaxY : worldHeight;
+    var biomeId = (level.biomeId === "desert" || level.biomeId === "ocean") ? level.biomeId : "default";
+    var crawlerDefs = [];
+    var slimeDefs = [];
+    var dotDefs;
+    if (biomeId === "default") {
+      slimeDefs = Array.isArray(level.slimes) ? level.slimes : [];
+      crawlerDefs = Array.isArray(level.crawlers) && level.crawlers.length > 0
+        ? level.crawlers
+        : generateCrawlers(platforms, slimeDefs, level.difficulty != null ? level.difficulty : 15, (level.seed != null ? level.seed : 0) + 555);
+      dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
+        ? level.dots
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, slimeDefs, crawlerDefs, undefined, level.stalactites || []);
+    } else {
+      crawlerDefs = [];
+      dotDefs = Array.isArray(level.dots) && level.dots.length === NUM_DOTS
+        ? level.dots
+        : generateDots(platforms, (level.seed != null ? level.seed : 0) + 444, goal, [], [], level.cactusDefs || [], []);
+    }
+    var obstacleOpts = { stalactiteDefs: level.stalactites || [], cactusDefs: level.cactusDefs || [] };
+    var rawItems = Array.isArray(level.items) ? level.items : [];
+    var itemDefs = biomeId === "ocean"
+      ? rawItems.filter(function (i) { return !i || (i.type !== "fireTotem" && i.type !== "lavaBounce"); })
+      : rawItems;
+    return {
+      currentLevelID: level.id,
+      currentLevelSeed: level.seed != null ? level.seed : null,
+      currentDifficulty: level.difficulty != null ? level.difficulty : null,
+      bestScore: level.bestScore,
+      biomeId: biomeId,
+      platforms: platforms,
+      goal: goal,
+      worldHeight: worldHeight,
+      worldMinY: worldMinY,
+      worldMaxY: worldMaxY,
+      slimeDefs: slimeDefs,
+      ceilingPoints: Array.isArray(level.ceiling) ? level.ceiling : [],
+      stalactiteDefs: Array.isArray(level.stalactites) ? level.stalactites : [],
+      batDefs: Array.isArray(level.bats) ? level.bats : [],
+      itemDefs: itemDefs,
+      dotDefs: dotDefs,
+      checkpointDefs: (Array.isArray(level.checkpoints) && level.checkpoints.length >= 2)
+        ? level.checkpoints
+        : generateCheckpoints(platforms, slimeDefs, (level.seed != null ? level.seed : 0) + 111, obstacleOpts),
+      crawlerDefs: crawlerDefs,
+      cactusDefs: Array.isArray(level.cactusDefs) ? level.cactusDefs : [],
+      scorpionDefs: Array.isArray(level.scorpionDefs) ? level.scorpionDefs : [],
+      buzzardDefs: Array.isArray(level.buzzardDefs) ? level.buzzardDefs : [],
+      ventDefs: Array.isArray(level.ventDefs) ? level.ventDefs : [],
+      urchinDefs: Array.isArray(level.urchinDefs) ? level.urchinDefs : [],
+      baracudaDefs: Array.isArray(level.baracudaDefs) ? level.baracudaDefs : [],
+      jellyfishDefs: Array.isArray(level.jellyfishDefs) ? level.jellyfishDefs : [],
+      seagullDefs: Array.isArray(level.seagullDefs) ? level.seagullDefs : [],
+      waterSurfaceY: level.waterSurfaceY != null ? level.waterSurfaceY : null
+    };
+  }
+
+  // --- Phaser scene
+  var GameScene = function () {
+    Phaser.Scene.call(this, { key: "Game" });
+  };
+  GameScene.prototype = Object.create(Phaser.Scene.prototype);
+  GameScene.prototype.constructor = GameScene;
+
+  GameScene.prototype.preload = function () {
+    // Audio assets (all optional; game still runs if a file is missing).
+    // Put files in assets/audio/ with these names/formats:
+    // - jump.mp3          (short, snappy jump)
+    // - death.mp3         (dragon death)
+    // - shield-loss.mp3   (lose fire totem / lava orb on hit)
+    // - lava.mp3          (lava splash / sizzle)
+    // - bat.mp3           (bat chitter)
+    // - crawler.mp3       (crawler slide)
+    // - slime.mp3         (slime jump)
+    // - breath.mp3        (fire breath)
+    // - platform-step.mp3 (stepping onto drop platform)
+    // - platform-fall.mp3 (drop platform falling)
+    // - win.mp3           (reach goal)
+    // - music.mp3         (looping background track)
+    // - boost.mp3         (air boost)
+    // - dot.mp3           (collecting a dot)
+    // - checkpoint.mp3    (touching a checkpoint; uses dot if missing)
+    this.load.audio("checkpoint", "assets/audio/checkpoint.mp3");
+    this.load.audio("jump", "assets/audio/jump.mp3");
+    this.load.audio("death", "assets/audio/death.mp3");
+    this.load.audio("shieldLoss", "assets/audio/shield-loss.mp3");
+    this.load.audio("lavaHit", "assets/audio/lava.mp3");
+    this.load.audio("batChitter", "assets/audio/bat.mp3");
+    this.load.audio("crawlerSlide", "assets/audio/crawler.mp3");
+    this.load.audio("slimeJump", "assets/audio/slime.mp3");
+    this.load.audio("breath", "assets/audio/breath.mp3");
+    this.load.audio("platformStep", "assets/audio/platform-step.mp3");
+    this.load.audio("platformFall", "assets/audio/platform-fall.mp3");
+    this.load.audio("win", "assets/audio/win.mp3");
+    this.load.audio("music", "assets/audio/music.mp3");
+    this.load.audio("boost", "assets/audio/boost.mp3");
+    this.load.audio("dot", "assets/audio/dot.mp3");
+    this.load.audio("chomp", "assets/audio/chomp.mp3");
+    // Desert biome: optional overrides; same file names under assets/biomes/desert/audio/ (see .agents/specs/biome-desert.md)
+    var desertBase = "assets/biomes/desert/audio/";
+    this.load.audio("desert_jump", desertBase + "jump.mp3");
+    this.load.audio("desert_death", desertBase + "death.mp3");
+    this.load.audio("desert_shieldLoss", desertBase + "shield-loss.mp3");
+    this.load.audio("desert_lavaHit", desertBase + "lava.mp3");
+    this.load.audio("desert_breath", desertBase + "breath.mp3");
+    this.load.audio("desert_platformStep", desertBase + "platform-step.mp3");
+    this.load.audio("desert_platformFall", desertBase + "platform-fall.mp3");
+    this.load.audio("desert_win", desertBase + "win.mp3");
+    this.load.audio("desert_music", desertBase + "music.mp3");
+    this.load.audio("desert_boost", desertBase + "boost.mp3");
+    this.load.audio("desert_dot", desertBase + "dot.mp3");
+    this.load.audio("desert_checkpoint", desertBase + "checkpoint.mp3");
+    this.load.audio("desert_chomp", desertBase + "chomp.mp3");
+    this.load.audio("desert_cactus", desertBase + "cactus.mp3");
+    this.load.audio("desert_scorpion", desertBase + "scorpion.mp3");
+    this.load.audio("desert_buzzard", desertBase + "buzzard.mp3");
+
+    // Ocean biome: optional overrides; see .agents/specs/biome-ocean.md
+    var oceanBase = "assets/biomes/ocean/audio/";
+    this.load.audio("ocean_jump", oceanBase + "jump.mp3");
+    this.load.audio("ocean_death", oceanBase + "death.mp3");
+    this.load.audio("ocean_shieldLoss", oceanBase + "shield-loss.mp3");
+    this.load.audio("ocean_breath", oceanBase + "breath.mp3");
+    this.load.audio("ocean_breathLow", oceanBase + "breath-low.mp3");
+    this.load.audio("ocean_bubbleShaft", oceanBase + "bubble-shaft.mp3");
+    this.load.audio("ocean_platformStep", oceanBase + "platform-step.mp3");
+    this.load.audio("ocean_platformFall", oceanBase + "platform-fall.mp3");
+    this.load.audio("ocean_win", oceanBase + "win.mp3");
+    this.load.audio("ocean_music", oceanBase + "music.mp3");
+    this.load.audio("ocean_boost", oceanBase + "boost.mp3");
+    this.load.audio("ocean_dot", oceanBase + "dot.mp3");
+    this.load.audio("ocean_checkpoint", oceanBase + "checkpoint.mp3");
+    this.load.audio("ocean_baracuda", oceanBase + "baracuda.mp3");
+    this.load.audio("ocean_jellyfish", oceanBase + "jellyfish.mp3");
+    this.load.audio("ocean_urchin", oceanBase + "urchin.mp3");
+    this.load.audio("ocean_seagull", oceanBase + "seagull.mp3");
+
+    this.load.on("loaderror", function (file) {
+      if (file && file.key && file.key.indexOf("desert_") === 0) {
+        console.warn("[Dragon Lava Jump] Desert audio file missing (see .agents/specs/biome-desert.md for paths):", file.key);
+      }
+      if (file && file.key && file.key.indexOf("ocean_") === 0) {
+        console.warn("[Dragon Lava Jump] Ocean audio file missing (see .agents/specs/biome-ocean.md for paths):", file.key);
+      }
+    });
+  };
+
+  GameScene.prototype.create = function () {
+    var data = window.__dragonLevelData;
+    if (!data) {
+      data = buildLevelDataForRandom();
+      window.__dragonLevelData = data;
+    }
+
+    this.LEVEL_LENGTH = LEVEL_LENGTH;
+    this.worldMinY = data.worldMinY != null ? data.worldMinY : 0;
+    this.worldMaxY = data.worldMaxY != null ? data.worldMaxY : (data.worldHeight || WORLD_H);
+    this.WORLD_H = this.worldMaxY;
+    this.platformsData = data.platforms;
+    this.basePlatformsData = JSON.parse(JSON.stringify(data.platforms));
+    this.goal = data.goal;
+    this.slimeDefs = data.slimeDefs;
+    this.ceilingPoints = data.ceilingPoints || [];
+    this.stalactiteDefs = data.stalactiteDefs || [];
+    this.batDefs = data.batDefs || [];
+    this.itemDefs = data.itemDefs || [];
+    this.dotDefs = data.dotDefs || [];
+    this.checkpointDefs = data.checkpointDefs || [];
+    this.crawlerDefs = data.crawlerDefs || [];
+    this.currentLevelID = data.currentLevelID;
+    this.currentLevelSeed = data.currentLevelSeed;
+    this.currentDifficulty = data.currentDifficulty;
+    this.bestScore = data.bestScore != null ? data.bestScore : Infinity;
+    this.biomeId = (data.biomeId === "desert" || data.biomeId === "ocean") ? data.biomeId : "default";
+    this.cactusDefs = data.cactusDefs || [];
+    this.scorpionDefs = data.scorpionDefs || [];
+    this.buzzardDefs = data.buzzardDefs || [];
+    this.ventDefs = data.ventDefs || [];
+    this.urchinDefs = data.urchinDefs || [];
+    this.baracudaDefs = data.baracudaDefs || [];
+    this.jellyfishDefs = data.jellyfishDefs || [];
+    this.seagullDefs = data.seagullDefs || [];
+    this.waterSurfaceY = data.waterSurfaceY != null ? data.waterSurfaceY : null;
+
+    // Biome-specific colors
+    var platformColor;
+    var lavaColor;
+    var goalColor;
+    if (this.biomeId === "desert") {
+      platformColor = 0xc4a574;
+      lavaColor = 0xb8860b;
+      goalColor = 0xdaa520;
+    } else if (this.biomeId === "ocean") {
+      platformColor = 0x0f766e; // teal platforms / structures
+      lavaColor = 0x0f172a;     // dark abyss color (will not be used as lava)
+      goalColor = 0x22c55e;     // bright green goal
+    } else {
+      platformColor = 0x8b5cf6;
+      lavaColor = 0xff4b3e;
+      goalColor = 0xffd93d;
+    }
+
+    // Log this level load into played history (even before completion)
+    appendProfileRun({
+      username: getProfileUsername(),
+      timestamp: new Date().toISOString(),
+      levelId: this.currentLevelID || null,
+      seed: this.currentLevelSeed || null,
+      difficulty: this.currentDifficulty != null ? this.currentDifficulty : null,
+      timeSeconds: null,
+      dotsCollected: 0,
+      dotsTotal: NUM_DOTS
+    });
+    if (typeof window.__dragonPopulatePlayedDropdown === "function") window.__dragonPopulatePlayedDropdown();
+
+    this.lastCheckpointIndex = -1;
+    this.lives = LIVES_START;
+    this.lavaY = this.worldMaxY - 50;
+    this.timerStarted = false;
+    this.startTime = 0;
+    this.currentTime = 0;
+    this.gameWon = false;
+    this.winSequenceState = "idle";
+    this.winHoldTimer = 0;
+    this.isDyingInLava = false;
+    this.lavaDeathTimer = 0;
+    this.cactusDeathDelay = 0;  // brief delay so cactus/cactus-death sound can play before respawn
+    this.ventSinkActive = false;  // ocean vent hole: shrink-into-hole death (no instant kill)
+    this.lavaBounceTimer = 0;
+    this.lavaBounceItemCollected = false;
+    this.lavaBounceBounces = 0;  // lava touches this run (reset on platform land)
+    this.lavaBounceTotalUses = 0;  // total bounces with orb; orb is lost after 3
+    this.lavaBounceCooldownUntil = 0;  // avoid counting one fall as multiple touches
+    this.fireTotemCollected = false;
+    this.fireBreathsLeft = 0;
+    this.breathActiveTime = 0;
+    this.chompCollected = false;
+    if (this.biomeId === "ocean") {
+      var dBreath = Math.max(1, Math.min(30, typeof this.currentDifficulty === "number" ? this.currentDifficulty : 12));
+      var tBreath = (dBreath - 1) / 29;
+      this.breathMaxSeconds = 7.5 + (1 - tBreath) * 11;
+    } else {
+      this.breathMaxSeconds = null;
+    }
+    this.breathRemainingSeconds = this.breathMaxSeconds;
+    this.breathLowPlayed = false;
+    this.cheatInvincible = !!(window.__dragonCheatInvincible);
+    this.cheatInfiniteLives = !!(window.__dragonCheatInfiniteLives);
+    this.cheatsUsedThisRun = this.cheatInvincible || this.cheatInfiniteLives || !!(window.__dragonCheatsUsedThisRun);
+    if (this.cheatInfiniteLives) this.lives = LIVES_START;
+    this.dotsCollected = this.dotDefs.map(function () { return false; });
+    this.dotsCollectedCount = 0;
+    this.score = 0;
+    this.bestScorePoints = getBestScoreForLevel(this.currentLevelID || "", getScoreUserId());
+    this.standingPlatformIndex = -1;
+    this.doubleJumpUsedThisFlight = false;  // only reset when landing on real platform; gates exactly one double jump per flight
+    this.doubleJumpPlatform = null;
+    this.wasOnDoubleJumpPlat = false;
+    this.cameraX = 0;
+
+    // Instantiate sounds: Desert/Ocean overrides default when file exists in biome-specific audio folders.
+    var soundKey = function (defaultK, desertK, oceanK) {
+      if (this.biomeId === "desert" && desertK && this.cache.audio.exists(desertK)) return desertK;
+      if (this.biomeId === "ocean" && oceanK && this.cache.audio.exists(oceanK)) return oceanK;
+      return defaultK;
+    }.bind(this);
+    var keyJump = soundKey("jump", "desert_jump", "ocean_jump");
+    var keyDeath = soundKey("death", "desert_death", "ocean_death");
+    var keyShieldLoss = soundKey("shieldLoss", "desert_shieldLoss", "ocean_shieldLoss");
+    var keyLavaHit = soundKey("lavaHit", "desert_lavaHit", null);
+    var keyBat = soundKey("batChitter", "desert_batChitter", null);
+    var keyCrawler = soundKey("crawlerSlide", "desert_crawlerSlide", null);
+    var keySlime = soundKey("slimeJump", "desert_slimeJump", null);
+    var keyBreath = soundKey("breath", "desert_breath", "ocean_breath");
+    var keyPlatformStep = soundKey("platformStep", "desert_platformStep", "ocean_platformStep");
+    var keyPlatformFall = soundKey("platformFall", "desert_platformFall", "ocean_platformFall");
+    var keyWin = soundKey("win", "desert_win", "ocean_win");
+    var keyMusic = soundKey("music", "desert_music", "ocean_music");
+    var keyBoost = soundKey("boost", "desert_boost", "ocean_boost");
+    var keyDot = soundKey("dot", "desert_dot", "ocean_dot");
+    var keyCheckpoint = soundKey("checkpoint", "desert_checkpoint", "ocean_checkpoint");
+    var keyChomp = soundKey("chomp", "desert_chomp", null);
+    this.jumpSound = this.cache.audio.exists(keyJump) ? this.sound.add(keyJump, { volume: 0.5 }) : null;
+    this.deathSound = this.cache.audio.exists(keyDeath) ? this.sound.add(keyDeath, { volume: 0.7 }) : null;
+    this.shieldLossSound = this.cache.audio.exists(keyShieldLoss) ? this.sound.add(keyShieldLoss, { volume: 0.7 }) : null;
+    this.lavaHitSound = this.cache.audio.exists(keyLavaHit) ? this.sound.add(keyLavaHit, { volume: 0.8 }) : null;
+    this.batSound = this.cache.audio.exists(keyBat) ? this.sound.add(keyBat, { volume: 0.4 }) : null;
+    this.crawlerSound = this.cache.audio.exists(keyCrawler) ? this.sound.add(keyCrawler, { volume: 0.7 }) : null;
+    this.slimeSound = this.cache.audio.exists(keySlime) ? this.sound.add(keySlime, { volume: 0.5 }) : null;
+    this.breathSound = this.cache.audio.exists(keyBreath) ? this.sound.add(keyBreath, { volume: 0.5 }) : null;
+    this.platformStepSound = this.cache.audio.exists(keyPlatformStep) ? this.sound.add(keyPlatformStep, { volume: 0.6 }) : null;
+    this.platformFallSound = this.cache.audio.exists(keyPlatformFall) ? this.sound.add(keyPlatformFall, { volume: 0.6 }) : null;
+    this.winSound = this.cache.audio.exists(keyWin) ? this.sound.add(keyWin, { volume: 0.7 }) : null;
+    this.boostSound = this.cache.audio.exists(keyBoost) ? this.sound.add(keyBoost, { volume: 0.6 }) : null;
+    this.dotSound = this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.8 }) : null;
+    this.checkpointSound = this.cache.audio.exists(keyCheckpoint) ? this.sound.add(keyCheckpoint, { volume: 0.7 }) : (this.cache.audio.exists(keyDot) ? this.sound.add(keyDot, { volume: 0.7 }) : null);
+    this.chompSound = this.cache.audio.exists(keyChomp) ? this.sound.add(keyChomp, { volume: 0.6 }) : null;
+    this.cactusSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_cactus")) ? this.sound.add("desert_cactus", { volume: 0.7 }) : null;
+    this.scorpionSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_scorpion")) ? this.sound.add("desert_scorpion", { volume: 0.5 }) : null;
+    this.buzzardSound = (this.biomeId === "desert" && this.cache.audio.exists("desert_buzzard")) ? this.sound.add("desert_buzzard", { volume: 0.5 }) : null;
+    this.baracudaSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_baracuda")) ? this.sound.add("ocean_baracuda", { volume: 0.6 }) : null;
+    this.jellyfishSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_jellyfish")) ? this.sound.add("ocean_jellyfish", { volume: 0.6 }) : null;
+    this.urchinSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_urchin")) ? this.sound.add("ocean_urchin", { volume: 0.6 }) : null;
+    this.breathLowSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_breathLow")) ? this.sound.add("ocean_breathLow", { volume: 0.6 }) : null;
+    this.breathRefillSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_breath")) ? this.sound.add("ocean_breath", { volume: 0.5 }) : null;
+    this.bubbleShaftSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_bubbleShaft")) ? this.sound.add("ocean_bubbleShaft", { volume: 0.4 }) : null;
+    this.seagullSound = (this.biomeId === "ocean" && this.cache.audio.exists("ocean_seagull")) ? this.sound.add("ocean_seagull", { volume: 0.55 }) : null;
+    this.music = null;
+    if (this.cache.audio.exists(keyMusic)) {
+      // Ensure only one biome music track plays at a time across scene switches.
+      var globalMusic = window.__dragonCurrentMusic || null;
+      if (globalMusic && globalMusic.stop && globalMusic.key !== keyMusic) {
+        try {
+          globalMusic.stop();
+        } catch (e) {}
+      }
+
+      var existingMusic = (typeof this.sound.get === "function") ? this.sound.get(keyMusic) : null;
+      if (existingMusic) {
+        this.music = existingMusic;
+        this.music.setLoop(true);
+        var enableMusic = isMusicEnabled();
+        this.music.setMute(!enableMusic);
+        if (enableMusic && !this.music.isPlaying) this.music.play();
+      } else {
+        this.music = this.sound.add(keyMusic, { volume: 0.35, loop: true });
+        if (isMusicEnabled()) this.music.play();
+        else this.music.setMute(true);
+      }
+      if (this.music) {
+        window.__dragonCurrentMusic = this.music;
+      }
+    }
+
+    this.physics.world.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
+    this.physics.world.gravity.y = gravity;
+
+    // Biome backgrounds
+    if (this.biomeId === "desert") {
+      // Desert: sandy sky background
+      var bgY = (this.worldMinY + this.worldMaxY) / 2;
+      var bgH = this.worldMaxY - this.worldMinY + 200;
+      this.add.rectangle(LEVEL_LENGTH / 2, bgY, LEVEL_LENGTH + 100, bgH, 0xedc9a0).setDepth(-10);
+    } else if (this.biomeId === "ocean") {
+      var surfY = this.waterSurfaceY != null ? this.waterSurfaceY : OCEAN_SURFACE_Y;
+      var skyH = Math.max(40, surfY - this.worldMinY);
+      var skyTop = this.worldMinY + skyH / 2;
+      this.add.rectangle(LEVEL_LENGTH / 2, skyTop, LEVEL_LENGTH + 120, skyH + 20, 0x87ceeb).setDepth(-12);
+      this.add.rectangle(LEVEL_LENGTH / 2, skyTop + skyH * 0.35, LEVEL_LENGTH + 120, skyH * 0.5, 0xb8d4ff, 0.5).setDepth(-11);
+      var waterTop = surfY + (this.worldMaxY - surfY) * 0.25;
+      this.add.rectangle(LEVEL_LENGTH / 2, waterTop, LEVEL_LENGTH + 120, (this.worldMaxY - surfY) * 1.2 + 40, 0x0369a1).setDepth(-10);
+      this.add.rectangle(LEVEL_LENGTH / 2, (surfY + this.worldMaxY) / 2, LEVEL_LENGTH + 120, this.worldMaxY - surfY + 80, 0x022c43).setDepth(-10);
+    }
+
+    // Platforms (static) - use rectangles; bent is visual only, collision is AABB
+    this.platformGroup = this.physics.add.staticGroup();
+    this.platformSprites = [];
+    for (var i = 0; i < this.platformsData.length; i++) {
+      var p = this.platformsData[i];
+      var pCol = platformColor;
+      if (this.biomeId === "ocean") {
+        if (p.isFloor) pCol = 0xc4a574;
+        else if (p.isCoral) pCol = 0x0d9488;
+      }
+      var rect = this.add.rectangle(p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, pCol);
+      this.physics.add.existing(rect, true);
+      // One-way platforms: collide only on top so you can walk through ends
+      rect.body.checkCollision.down = false;
+      rect.body.checkCollision.left = false;
+      rect.body.checkCollision.right = false;
+      this.platformGroup.add(rect);
+      rect.setData("platformIndex", i);
+      rect.setData("platformData", p);
+      this.platformSprites.push(rect);
+    }
+
+    if (this.biomeId === "ocean") {
+      var deco = this.add.graphics().setDepth(2);
+      var rngDeco = makeRng((this.currentLevelSeed || 0) + 4444);
+      for (var oi = 0; oi < this.platformsData.length; oi++) {
+        var op = this.platformsData[oi];
+        if (!op || op.isFloor) continue;
+        for (var k = 0; k < 4; k++) {
+          var ax = op.x + rngDeco() * op.w;
+          var ay = op.y + 6;
+          deco.fillStyle(0xf472b6, 0.75);
+          deco.fillTriangle(ax, ay, ax - 5, ay + 16, ax + 5, ay + 16);
+          deco.fillStyle(0x34d399, 0.65);
+          deco.fillRect(ax + rngDeco() * 8 - 4, ay - 2, 3, 12 + rngDeco() * 10);
+        }
+      }
+      for (var sx = 40; sx < LEVEL_LENGTH; sx += 100) {
+        var sy = OCEAN_FLOOR_Y - 8 + rngDeco() * 6;
+        deco.fillStyle(0x059669, 0.4);
+        deco.fillEllipse(sx + rngDeco() * 30, sy, 14 + rngDeco() * 10, 22 + rngDeco() * 12);
+      }
+    }
+
+    // Lava zone (physics) + visible lava/quicksand strip - at bottom of dynamic world
+    if (this.biomeId !== "ocean") {
+      var lavaCenterY = this.worldMaxY - 30;
+      this.lavaZone = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY, LEVEL_LENGTH, 60, lavaColor, 0);
+      this.physics.add.existing(this.lavaZone, true);
+      this.lavaZone.body.updateFromGameObject = function () {};
+      this.lavaSprite = this.add.rectangle(LEVEL_LENGTH / 2, lavaCenterY + 15, LEVEL_LENGTH, 30, lavaColor, 1)
+        .setDepth(0);
+      // Keep a cached lava top for bounce positioning
+      this.lavaY = this.lavaZone.y - this.lavaZone.height / 2;
+    } else {
+      this.lavaZone = null;
+      this.lavaSprite = null;
+      this.lavaY = this.worldMaxY;
+    }
+
+    // Goal
+    this.goalZone = this.add.rectangle(
+      this.goal.x + this.goal.w / 2,
+      this.goal.y + this.goal.h / 2,
+      this.goal.w,
+      this.goal.h,
+      goalColor
+    );
+    this.physics.add.existing(this.goalZone, true);
+    this.goalZone.body.updateFromGameObject = function () {};
+
+    // Player - blocky Atari-style dragon: body rectangle + separate head/eye positioned by facing
+    this.player = this.add.rectangle(0, 0, DRAGON_W, DRAGON_H, 0x4a9b4a);
+    this.playerHead = this.add.rectangle(0, 0, 6, 12, 0x3d8b3d).setDepth(21);
+    this.playerEye = this.add.rectangle(0, 0, 3, 3, 0xffffff).setDepth(21);
+    // Open mouth (only when chomp): upper/lower jaw + white teeth on roof and floor of mouth
+    this.playerUpperJaw = this.add.rectangle(0, 0, 6, 4, 0x3d8b3d).setDepth(21).setVisible(false);
+    this.playerLowerJaw = this.add.rectangle(0, 0, 6, 4, 0x3d8b3d).setDepth(21).setVisible(false);
+    this.chompTooth1 = this.add.triangle(0, 0, -2, -2, 2, -2, 0, 4, 0xffffff).setDepth(22).setVisible(false);
+    this.chompTooth2 = this.add.triangle(0, 0, -2, 2, 2, 2, 0, -4, 0xffffff).setDepth(22).setVisible(false);
+    this.physics.add.existing(this.player, false);
+    this.player.body.setSize(DRAGON_W, DRAGON_H);
+    this.player.body.setOffset(0, 0);
+    this.player.body.setCollideWorldBounds(true);
+    this.player.setDepth(20);
+    this.player.facing = 1;
+    this.player.onGround = false;
+    this.player.jumpsLeft = 2;
+    this.player.boostAvailable = true;
+    this.player.boostFramesLeft = 0;
+    this.player.oceanBoostFramesLeft = 0;
+    this.player.oceanBoostCooldownLeft = 0;
+    this.player.timeInAir = 0;
+    var startPlat = this.platformsData[0];
+    this.player.x = startPlat.x + startPlat.w / 2;
+    this.player.y = startPlat.y - DRAGON_H / 2 - 8;
+    this.player.body.setVelocity(0, 0);
+
+    // Default biome: slimes, bats, crawlers, stalactites. Desert: cacti, scorpions, buzzards. Ocean: vents, urchins, baracudas, jellyfish.
+    this.slimes = [];
+    this.slimeEyes = [];
+    this.bats = [];
+    this.batParts = [];
+    this.crawlers = [];
+    this.crawlerEyes = [];
+    this.stalactites = [];
+    this.cacti = [];
+    this.cactusHitboxes = [];
+    this.scorpions = [];
+    this.buzzards = [];
+    this.buzzardParts = [];
+    this.needles = [];
+    this.vents = [];
+    this.ventKillZones = [];
+    this.urchins = [];
+    this.baracudas = [];
+    this.baracudaData = [];
+    this.jellyfish = [];
+    this.jellyfishData = [];
+    this.seagulls = [];
+
+    if (this.biomeId === "default") {
+    var slimeW = 22, slimeH = 18;
+    for (var si = 0; si < this.slimeDefs.length; si++) {
+      var def = this.slimeDefs[si];
+      var plat = this.platformsData[def.platformIndex];
+      if (!plat) continue;
+      var baseX = plat.x + def.offset * plat.w - slimeW / 2;
+      var baseY = plat.y - slimeH;
+      var delay = (typeof def.delay === "number" && def.delay > 0) ? def.delay : 60 + Math.random() * 120;
+      var slime = this.add.rectangle(baseX + slimeW / 2, baseY + slimeH / 2, slimeW, slimeH, 0x4ade80);
+      this.physics.add.existing(slime, false);
+      // Slightly shrink slime hitbox for fairer collisions
+      slime.body.setSize(slimeW - 6, slimeH - 4);
+      slime.body.setOffset(3, 2);
+      slime.body.setAllowGravity(false);
+      slime.body.setVelocity(0, 0);
+      slime.setData("platformIndex", def.platformIndex);
+      slime.setData("offset", def.offset);
+      slime.setData("baseX", baseX + slimeW / 2);
+      slime.setData("baseY", baseY + slimeH / 2);
+      slime.setData("state", "waiting");
+      slime.setData("timer", delay / REFERENCE_FPS);
+      slime.setData("vy", 0);
+      slime.setData("dead", false);
+      this.slimes.push(slime);
+      // Cute slime eyes (purely visual)
+      var eyeOffsetX = 4;
+      var eyeY = -3;
+      var eye1 = this.add.rectangle(slime.x - eyeOffsetX, slime.y + eyeY, 3, 3, 0xffffff).setDepth(slime.depth + 1);
+      var eye2 = this.add.rectangle(slime.x + eyeOffsetX, slime.y + eyeY, 3, 3, 0xffffff).setDepth(slime.depth + 1);
+      this.slimeEyes.push({ body: slime, eye1: eye1, eye2: eye2 });
+    }
+
+    // Bats
+    for (var bi = 0; bi < this.batDefs.length; bi++) {
+      var bdef = this.batDefs[bi];
+      // Bright body color so they stand out from the dark background
+      var bat = this.add.rectangle(bdef.x + BAT_W / 2, bdef.y + BAT_H / 2, BAT_W, BAT_H, 0xff6b6b)
+        .setDepth(50);
+      this.physics.add.existing(bat, false);
+      bat.body.setAllowGravity(false);
+      bat.body.setVelocity(0, 0);
+      bat.setData("rng", makeRng(bdef.rngSeed != null ? bdef.rngSeed : bi));
+      bat.setData("vx", 0);
+      bat.setData("vy", 0);
+      this.bats.push(bat);
+      // Cute bat wings + eyes (visual only)
+      var wingSpan = 10;
+      var wingY = 0;
+      var leftWing = this.add.rectangle(bat.x - wingSpan, bat.y + wingY, BAT_W / 2, BAT_H / 2, 0x9ca3af).setDepth(bat.depth - 1);
+      var rightWing = this.add.rectangle(bat.x + wingSpan, bat.y + wingY, BAT_W / 2, BAT_H / 2, 0x9ca3af).setDepth(bat.depth - 1);
+      var eyeOffset = 3;
+      var eyeYb = -3;
+      var eyeL = this.add.rectangle(bat.x - eyeOffset, bat.y + eyeYb, 2, 2, 0xffffff).setDepth(bat.depth + 1);
+      var eyeR = this.add.rectangle(bat.x + eyeOffset, bat.y + eyeYb, 2, 2, 0xffffff).setDepth(bat.depth + 1);
+      this.batParts.push({ body: bat, leftWing: leftWing, rightWing: rightWing, eyeL: eyeL, eyeR: eyeR });
+    }
+
+    // Crawlers
+    for (var ci = 0; ci < this.crawlerDefs.length; ci++) {
+      var cdef = this.crawlerDefs[ci];
+      var cplat = this.platformsData[cdef.platformIndex];
+      if (!cplat) continue;
+      var pos = crawlerPerimeterPosition(cplat, cdef.offset);
+      var crawler = this.add.rectangle(pos.cx, pos.cy, CRAWLER_W, CRAWLER_H, 0x3b82f6);
+      this.physics.add.existing(crawler, false);
+      crawler.body.setAllowGravity(false);
+      crawler.setData("platformIndex", cdef.platformIndex);
+      crawler.setData("offset", cdef.offset);
+      crawler.setData("dead", false);
+      this.crawlers.push(crawler);
+      // Cute crawler eyes
+      var cEyeOffset = 3;
+      var cEyeY = -3;
+      var cEye1 = this.add.rectangle(crawler.x - cEyeOffset, crawler.y + cEyeY, 2, 2, 0xffffff).setDepth(crawler.depth + 1);
+      var cEye2 = this.add.rectangle(crawler.x + cEyeOffset, crawler.y + cEyeY, 2, 2, 0xffffff).setDepth(crawler.depth + 1);
+      this.crawlerEyes.push({ body: crawler, eye1: cEye1, eye2: cEye2 });
+    }
+
+    // Stalactites (pointy triangles hanging from ceiling + rectangle hitbox)
+    for (var sti = 0; sti < this.stalactiteDefs.length; sti++) {
+      var st = this.stalactiteDefs[sti];
+      var sx = st.x;
+      var sy = st.y;
+      var sw = st.w || 24;
+      var sh = st.length || 40;
+      // Invisible rectangular hitbox
+      var rect = this.add.rectangle(sx, sy + sh / 2, sw, sh, 0x000000, 0);
+      this.physics.add.existing(rect, true);
+      rect.body.updateFromGameObject = function () {};
+      this.stalactites.push(rect);
+      // Visible pointy stalactite graphic
+      var gfx = this.add.graphics().setDepth(1);
+      gfx.fillStyle(0x3f2b63, 1);
+      gfx.fillTriangle(sx - sw / 2, sy, sx + sw / 2, sy, sx, sy + sh);
+    }
+    } else if (this.biomeId === "desert") {
+      // Cacti (3 varieties: saguaro, barrel, needle-shooter) - hitbox + visual
+      for (var ci = 0; ci < this.cactusDefs.length; ci++) {
+        var cdef = this.cactusDefs[ci];
+        var cplat = this.platformsData[cdef.platformIndex];
+        if (!cplat) continue;
+        var cx = cplat.x + cdef.offset * cplat.w;
+        var cy = cplat.y - CACTUS_H / 2;
+        var hitbox = this.add.rectangle(cx, cy, CACTUS_W, CACTUS_H, 0x000000, 0);
+        this.physics.add.existing(hitbox, true);
+        hitbox.body.updateFromGameObject = function () {};
+        hitbox.setData("defIndex", ci);
+        hitbox.setData("variety", cdef.variety);
+        hitbox.setData("shakeTimer", 0);
+        hitbox.setData("fired", false);
+        hitbox.setData("burned", false);
+        this.cactusHitboxes.push(hitbox);
+        var gfx = this.add.graphics().setDepth(2);
+        if (cdef.variety === 0) {
+          gfx.fillStyle(0x2d5a27, 1);
+          gfx.fillRect(cx - 5, cy - CACTUS_H / 2 + 4, 10, CACTUS_H - 8);
+          gfx.fillStyle(0x3d7a35, 1);
+          gfx.fillRect(cx - 8, cy - 4, 6, 12);
+          gfx.fillRect(cx + 2, cy - 10, 5, 10);
+        } else if (cdef.variety === 1) {
+          gfx.fillStyle(0x4a7c3a, 1);
+          gfx.fillEllipse(cx, cy, 14, CACTUS_H - 4);
+          gfx.fillStyle(0x3a6c2a, 1);
+          gfx.fillEllipse(cx - 4, cy + 4, 6, 10);
+        } else {
+          gfx.fillStyle(0x2d5a27, 1);
+          gfx.fillRect(cx - 4, cy - CACTUS_H / 2 + 2, 8, CACTUS_H - 4);
+          gfx.fillStyle(0x1a3a17, 1);
+          for (var n = 0; n < 6; n++) gfx.fillCircle(cx + (n % 2) * 6 - 3, cy - CACTUS_H / 2 + 6 + n * 6, 2);
+        }
+        hitbox.setData("gfx", gfx);
+        this.cacti.push({ hitbox: hitbox, gfx: gfx, def: cdef });
+      }
+      // Scorpions (patrol on platform)
+      for (var sci = 0; sci < this.scorpionDefs.length; sci++) {
+        var sdef = this.scorpionDefs[sci];
+        var splat = this.platformsData[sdef.platformIndex];
+        if (!splat) continue;
+        var sy = splat.y - SCORPION_H / 2;
+        var scorp = this.add.rectangle(sdef.startX, sy, SCORPION_W, SCORPION_H, 0x5c4033);
+        this.physics.add.existing(scorp, false);
+        scorp.body.setAllowGravity(false);
+        scorp.body.setVelocity(0, 0);
+        scorp.setData("left", sdef.left);
+        scorp.setData("right", sdef.right);
+        scorp.setData("direction", sdef.direction);
+        scorp.setData("defIndex", sci);
+        scorp.setData("stepTimer", Math.random() * SCORPION_STEP_INTERVAL);  // stagger walk sounds
+        this.scorpions.push(scorp);
+      }
+      // Buzzards (fly like bats)
+      for (var bzi = 0; bzi < this.buzzardDefs.length; bzi++) {
+        var bzdef = this.buzzardDefs[bzi];
+        var buzz = this.add.rectangle(bzdef.x + BUZZARD_W / 2, bzdef.y + BUZZARD_H / 2, BUZZARD_W, BUZZARD_H, 0x4a3728).setDepth(50);
+        this.physics.add.existing(buzz, false);
+        buzz.body.setAllowGravity(false);
+        buzz.body.setVelocity(0, 0);
+        buzz.setData("rng", makeRng(bzdef.rngSeed != null ? bzdef.rngSeed : bzi));
+        buzz.setData("vx", 0);
+        buzz.setData("vy", 0);
+        this.buzzards.push(buzz);
+        var wingL = this.add.rectangle(buzz.x - 8, buzz.y + 2, BUZZARD_W / 2, BUZZARD_H / 2, 0x3d2e22).setDepth(buzz.depth - 1);
+        var wingR = this.add.rectangle(buzz.x + 8, buzz.y + 2, BUZZARD_W / 2, BUZZARD_H / 2, 0x3d2e22).setDepth(buzz.depth - 1);
+        this.buzzardParts.push({ body: buzz, wingL: wingL, wingR: wingR });
+      }
+      this.needleGroup = this.physics.add.group();
+    } else if (this.biomeId === "ocean") {
+      // Vents (on ocean floor platforms)
+      this.bubbleParticles = [];
+      for (var vi = 0; vi < this.ventDefs.length; vi++) {
+        var vdef = this.ventDefs[vi];
+        var vplat = this.platformsData[vdef.platformIndex];
+        if (!vplat) continue;
+        var vx = vplat.x + vdef.offset * vplat.w;
+        var vyTop = vplat.y;
+        var shaftHalfW = OCEAN_VENT_SHAFT_HALF_WIDTH;
+        var holeR = shaftHalfW;
+        this.vents.push({
+          x: vx,
+          yTop: vyTop,
+          yBottom: vyTop + (vplat.h || 16),
+          radius: shaftHalfW,
+          holeRadius: holeR,
+          holeCy: vyTop + 8
+        });
+        var ventGfx = this.add.graphics().setDepth(3);
+        ventGfx.fillStyle(0x020617, 1);
+        ventGfx.fillEllipse(vx, vyTop + 5, holeR * 2, holeR * 0.75);
+        ventGfx.fillStyle(0x0f172a, 1);
+        ventGfx.fillEllipse(vx, vyTop + 2, holeR * 1.45, holeR * 0.55);
+        var shaftH = Math.max(40, (this.worldMaxY - this.worldMinY) * 0.6);
+        var shaftRect = this.add.rectangle(vx, vyTop - shaftH / 2, shaftHalfW * 2, shaftH, 0x38bdf8, 0.14).setDepth(1);
+        this.bubbleShafts = this.bubbleShafts || [];
+        this.bubbleShafts.push({ x: vx, yTop: this.worldMinY + 20, yBottom: vyTop, visual: shaftRect });
+        // Bubble particles shimmering up the column
+        var bubblesPerVent = 6;
+        for (var bi = 0; bi < bubblesPerVent; bi++) {
+          var by = vyTop - (shaftH * Math.random());
+          var r = 2 + Math.random() * 2;
+          var bubbleG = this.add.circle(vx + (Math.random() - 0.5) * shaftHalfW * 1.85, by, r, 0x7dd3fc, 0.8).setDepth(2);
+          this.bubbleParticles.push({
+            gfx: bubbleG,
+            x: bubbleG.x,
+            y: by,
+            topY: this.worldMinY + 20,
+            bottomY: vyTop,
+            speed: 30 + Math.random() * 40
+          });
+        }
+      }
+
+      // Sea urchins on floor and structures
+      for (var ui = 0; ui < this.urchinDefs.length; ui++) {
+        var udef = this.urchinDefs[ui];
+        var uplat = this.platformsData[udef.platformIndex];
+        if (!uplat) continue;
+        var ux = uplat.x + udef.offset * uplat.w;
+        var uy = uplat.y - URCHIN_H / 2;
+        var urchin = this.add.rectangle(ux, uy, URCHIN_W, URCHIN_H, 0x0f172a);
+        this.physics.add.existing(urchin, true);
+        urchin.body.updateFromGameObject = function () {};
+        this.urchins.push(urchin);
+        var ugfx = this.add.graphics().setDepth(urchin.depth + 1);
+        ugfx.fillStyle(0x581c87, 1);
+        ugfx.fillCircle(ux, uy, URCHIN_W * 0.35);
+        for (var s = 0; s < 12; s++) {
+          var angle = (s / 12) * Math.PI * 2;
+          var col = s % 2 === 0 ? 0xf472b6 : 0x22d3ee;
+          var sx = ux + Math.cos(angle) * (URCHIN_W * 0.55);
+          var sy = uy + Math.sin(angle) * (URCHIN_H * 0.55);
+          ugfx.fillStyle(col, 1);
+          ugfx.fillTriangle(ux, uy, sx, sy, ux + Math.cos(angle + 0.15) * (URCHIN_W * 0.25), uy + Math.sin(angle + 0.15) * (URCHIN_H * 0.25));
+        }
+      }
+
+      // Baracudas: invisible hitbox + two-part body (tail + head) + eyes; hitbox matches legacy size
+      for (var bai = 0; bai < this.baracudaDefs.length; bai++) {
+        var bdef = this.baracudaDefs[bai];
+        var bx = bdef.x + BARACUDA_W / 2;
+        var by = bdef.y + BARACUDA_H / 2;
+        var bar = this.add.rectangle(bx, by, BARACUDA_W, BARACUDA_H, 0x38bdf8, 0);
+        bar.setVisible(false);
+        this.physics.add.existing(bar, false);
+        bar.body.setAllowGravity(false);
+        bar.body.setVelocity(0, 0);
+        var rng = makeRng(bdef.rngSeed != null ? bdef.rngSeed : bai);
+        bar.setData("rng", rng);
+        bar.setData("vx", 0);
+        bar.setData("vy", 0);
+        bar.setData("state", "patrol");
+        bar.setData("lingerTime", 0);
+        var tailPart = this.add.rectangle(bx, by, BARACUDA_W * 0.58, BARACUDA_H, 0x38bdf8).setDepth(49);
+        tailPart.setStrokeStyle(1, 0xe0f2fe, 0.85);
+        var headPart = this.add.rectangle(bx, by, BARACUDA_W * 0.42, BARACUDA_H * 1.15, 0x7dd3fc).setDepth(50);
+        headPart.setStrokeStyle(1, 0xf0f9ff, 0.9);
+        var eyeL = this.add.circle(bx, by, 2.5, 0xffffff).setDepth(51);
+        var eyeR = this.add.circle(bx, by, 2.5, 0xffffff).setDepth(51);
+        var pupL = this.add.circle(bx, by, 1.1, 0x0f172a).setDepth(52);
+        var pupR = this.add.circle(bx, by, 1.1, 0x0f172a).setDepth(52);
+        bar.setData("tailPart", tailPart);
+        bar.setData("headPart", headPart);
+        bar.setData("eyeL", eyeL);
+        bar.setData("eyeR", eyeR);
+        bar.setData("pupL", pupL);
+        bar.setData("pupR", pupR);
+        this.baracudas.push(bar);
+        this.baracudaData.push({ body: bar });
+      }
+
+      // Jellyfish (pink bell + tentacles)
+      for (var ji = 0; ji < this.jellyfishDefs.length; ji++) {
+        var jdef = this.jellyfishDefs[ji];
+        var jx = jdef.x + JELLYFISH_W / 2;
+        var jy = jdef.y + JELLYFISH_H / 2;
+        var jelly = this.add.rectangle(jx, jy, JELLYFISH_W, JELLYFISH_H, 0x000000, 0).setDepth(45);
+        jelly.setVisible(false);
+        this.physics.add.existing(jelly, false);
+        jelly.body.setAllowGravity(false);
+        jelly.body.setVelocity(0, 0);
+        jelly.setData("baseX", jx);
+        jelly.setData("baseY", jy);
+        jelly.setData("vertical", !!jdef.vertical);
+        jelly.setData("amplitude", jdef.amplitude != null ? jdef.amplitude : 50);
+        jelly.setData("periodSec", jdef.periodSec != null ? jdef.periodSec : 3.5);
+        var bell = this.add.ellipse(jx, jy - 3, JELLYFISH_W - 2, JELLYFISH_H * 0.45, 0xf9a8d4, 0.95).setDepth(46);
+        bell.setStrokeStyle(1, 0xec4899, 0.8);
+        var jt = this.add.graphics().setDepth(44);
+        jelly.setData("bell", bell);
+        jelly.setData("tentGfx", jt);
+        this.jellyfish.push(jelly);
+        this.jellyfishData.push({ body: jelly });
+      }
+
+      // Seagulls (sky hunters — swoop when player surfaces)
+      for (var sgi = 0; sgi < this.seagullDefs.length; sgi++) {
+        var sgdef = this.seagullDefs[sgi];
+        var gx = sgdef.x;
+        var gy = sgdef.y;
+        var gull = this.add.rectangle(gx, gy, 24, 14, 0xf8fafc).setDepth(65);
+        gull.setStrokeStyle(1, 0x94a3b8, 0.8);
+        this.physics.add.existing(gull, false);
+        gull.body.setAllowGravity(false);
+        gull.body.setSize(24, 14);
+        gull.setData("def", sgdef);
+        gull.setData("state", "patrol");
+        gull.setData("baseX", gx);
+        gull.setData("phase", sgi * 0.7);
+        gull.setData("swoopSpeed", 0);
+        gull.setData("swoopEngaged", false);
+        this.seagulls.push(gull);
+      }
+    }
+
+    // Dots
+    this.dotSprites = [];
+    for (var di = 0; di < this.dotDefs.length; di++) {
+      var d = this.dotDefs[di];
+      var dot = this.add.rectangle(d.x, d.y, DOT_R * 2, DOT_R * 2, 0xe879f9);
+      this.physics.add.existing(dot, true);
+      dot.body.updateFromGameObject = function () {};
+      dot.setData("index", di);
+      dot.setData("collected", false);
+      this.dotSprites.push(dot);
+    }
+
+    // Checkpoints (2 per level at ~1/3 and ~2/3) - visible pole + flag, overlap zone
+    this.checkpointZones = [];
+    this.checkpointVfx = [];
+    for (var cpi = 0; cpi < this.checkpointDefs.length; cpi++) {
+      var cp = this.checkpointDefs[cpi];
+      var cpplat = this.platformsData[cp.platformIndex];
+      if (!cpplat) continue;
+      var poleCenterX = cpplat.x + cpplat.w * cp.offset;
+      var poleTop = cpplat.y - POLE_H;
+      var zone = this.add.rectangle(poleCenterX, poleTop + POLE_H / 2, POLE_W, POLE_H, 0x4a5568, 0);
+      this.physics.add.existing(zone, true);
+      zone.body.updateFromGameObject = function () {};
+      zone.setData("index", cpi);
+      this.checkpointZones.push(zone);
+      var pole = this.add.rectangle(poleCenterX, poleTop + POLE_H / 2, 4, POLE_H, 0x718096).setDepth(18);
+      var flag = this.add.rectangle(poleCenterX + 6, poleTop + 4, 12, 8, 0x48bb78).setDepth(18);
+      this.checkpointVfx.push({ pole: pole, flag: flag });
+    }
+
+    // Items
+    this.itemZones = [];
+    this.itemVfx = [];
+    for (var ii = 0; ii < this.itemDefs.length; ii++) {
+      var it = this.itemDefs[ii];
+      var iz = this.add.rectangle(it.x + it.w / 2, it.y + it.h / 2, it.w, it.h, 0xffffff, 0); // invisible hitbox
+      this.physics.add.existing(iz, true);
+      iz.body.updateFromGameObject = function () {};
+      iz.setData("item", it);
+      iz.setData("collected", false);
+      this.itemZones.push(iz);
+      // Visuals for items
+      if (it.type === "lavaBounce") {
+        var orb = this.add.ellipse(it.x + it.w / 2, it.y + it.h / 2, it.w, it.h, 0xffb84d).setDepth(iz.depth + 1);
+        this.itemVfx.push({ zone: iz, type: "lavaBounce", sprite: orb });
+      } else if (it.type === "fireTotem") {
+        var base = this.add.rectangle(it.x + it.w / 2, it.y + it.h - 8, it.w - 8, 12, 0x5c4a3a).setDepth(iz.depth + 1);
+        var mid = this.add.rectangle(it.x + it.w / 2, it.y + it.h - 16, it.w - 12, 6, 0x6b5a4a).setDepth(iz.depth + 1);
+        var flame = this.add.ellipse(it.x + it.w / 2, it.y, it.w - 6, it.h - 6, 0xffb84d).setDepth(iz.depth + 2);
+        this.itemVfx.push({ zone: iz, type: "fireTotem", base: base, mid: mid, flame: flame });
+      } else if (it.type === "chomp") {
+        var cx = it.x + it.w / 2;
+        var cy = it.y + it.h / 2;
+        var tooth1 = this.add.triangle(cx - 6, cy, 0, -10, 8, 0, 0, 10, 0xfacc15).setDepth(iz.depth + 1);
+        var tooth2 = this.add.triangle(cx + 6, cy, 0, -10, 8, 0, 0, 10, 0x84cc16).setDepth(iz.depth + 1);
+        this.itemVfx.push({ zone: iz, type: "chomp", tooth1: tooth1, tooth2: tooth2 });
+      } else if (it.type === "airCanister") {
+        var acx = it.x + it.w / 2;
+        var acy = it.y + it.h / 2;
+        var tank = this.add.rectangle(acx, acy, it.w - 4, it.h - 6, 0x38bdf8).setDepth(iz.depth + 1);
+        tank.setStrokeStyle(2, 0xe0f2fe, 1);
+        var cap = this.add.rectangle(acx, it.y + 6, it.w - 8, 6, 0x94a3b8).setDepth(iz.depth + 2);
+        this.itemVfx.push({ zone: iz, type: "airCanister", tank: tank, cap: cap });
+      }
+    }
+
+    // Fire breath visuals (created when breathing)
+    this.breathZone = null;
+    this.breathSprite = this.add.rectangle(this.player.x, this.player.y, BREATH_LEN, DRAGON_H - 8, 0xffb84d, 0.7)
+      .setVisible(false)
+      .setDepth(this.player.depth - 1);
+
+    this.physics.add.collider(this.player, this.platformGroup, null, null, this);
+    if (this.lavaZone) {
+      this.physics.add.overlap(this.player, this.lavaZone, this.onOverlapLava, null, this);
+    }
+    this.physics.add.overlap(this.player, this.goalZone, this.onOverlapGoal, null, this);
+    this.physics.add.overlap(this.player, this.dotSprites, this.onOverlapDot, null, this);
+    this.physics.add.overlap(this.player, this.checkpointZones, this.onOverlapCheckpoint, null, this);
+    this.physics.add.overlap(this.player, this.itemZones, this.onOverlapItem, null, this);
+    if (this.biomeId === "default") {
+      this.physics.add.overlap(this.player, this.slimes, this.onOverlapSlime, null, this);
+      this.physics.add.overlap(this.player, this.bats, this.onOverlapBat, null, this);
+      this.physics.add.overlap(this.player, this.crawlers, this.onOverlapCrawler, null, this);
+      this.physics.add.overlap(this.player, this.stalactites, this.onOverlapStalactite, null, this);
+    } else if (this.biomeId === "desert") {
+      this.physics.add.overlap(this.player, this.cactusHitboxes, this.onOverlapCactus, null, this);
+      this.physics.add.overlap(this.player, this.scorpions, this.onOverlapScorpion, null, this);
+      this.physics.add.overlap(this.player, this.buzzards, this.onOverlapBuzzard, null, this);
+      this.physics.add.overlap(this.player, this.needleGroup, this.onOverlapNeedle, null, this);
+    } else if (this.biomeId === "ocean") {
+      if (this.urchins && this.urchins.length) {
+        this.physics.add.overlap(this.player, this.urchins, this.onOverlapUrchin, null, this);
+      }
+      if (this.baracudas && this.baracudas.length) {
+        this.physics.add.overlap(this.player, this.baracudas, this.onOverlapBaracuda, null, this);
+      }
+      if (this.jellyfish && this.jellyfish.length) {
+        this.physics.add.overlap(this.player, this.jellyfish, this.onOverlapJellyfish, null, this);
+      }
+      if (this.seagulls && this.seagulls.length) {
+        this.physics.add.overlap(this.player, this.seagulls, this.onOverlapSeagull, null, this);
+      }
+    }
+
+    this.cameras.main.setBounds(0, this.worldMinY, LEVEL_LENGTH, this.worldMaxY - this.worldMinY);
+    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+    this.cameras.main.setDeadzone(0, 0);
+    // On smaller screens, zoom out a bit so you can see more of the level
+    try {
+      var vw = window.innerWidth || 640;
+      var vh = window.innerHeight || 360;
+      // Base zoom of 1 on desktop; reduce to show more world on shorter viewports
+      var zoom = 1;
+      if (vh < 800) {
+        zoom = Math.max(0.7, vh / 600);
+      }
+      this.cameras.main.setZoom(zoom);
+    } catch (_) {}
+
+    this.hudText = this.add.text(16, 14, "", { fontSize: "14px", color: "#fff", backgroundColor: "#00000088" }).setScrollFactor(0).setDepth(100);
+    if (this.hudText.setPadding) this.hudText.setPadding(8, 4);
+
+    this.godModeBorder = this.add.graphics().setScrollFactor(0).setDepth(9999);
+    var gw = this.cameras.main.width;
+    var gh = this.cameras.main.height;
+    this.godModeBorder.lineStyle(6, 0xffd700, 0.9);
+    this.godModeBorder.strokeRect(3, 3, gw - 6, gh - 6);
+    this.godModeBorder.setVisible(false);
+  };
+
+  // Play SFX or log to console when file is missing (see .agents/specs/biome-cave.md and biome-desert.md for required files)
+  GameScene.prototype.playSfx = function (soundRef, nameForLog, playOptions) {
+    if (soundRef && isSfxEnabled()) {
+      if (playOptions != null) soundRef.play(playOptions);
+      else soundRef.play();
+    } else if (isSfxEnabled()) {
+      console.warn("[Dragon Lava Jump] Sound not available (missing file):", nameForLog);
+    }
+  };
+
+  GameScene.prototype.addScore = function (points) {
+    var diff = Math.max(1, Math.min(30, typeof this.currentDifficulty === "number" ? this.currentDifficulty : 1));
+    var mult = 1 + (diff - 1) * SCORE_DIFFICULTY_FACTOR;
+    this.score += Math.round(points * mult);
+  };
+
+  GameScene.prototype.updateHUD = function () {
+    var bestTimeStr = (this.bestScore !== Infinity && isFinite(this.bestScore)) ? this.bestScore.toFixed(2) : "--";
+    var bestScoreStr = (this.bestScorePoints != null && this.bestScorePoints > 0) ? String(this.bestScorePoints) : "--";
+    var livesStr = "\u2665".repeat(this.lives) + "\u2661".repeat(LIVES_START - this.lives);
+    var diffStr = this.currentDifficulty != null ? " (Diff " + Math.max(1, Math.min(30, Math.floor(this.currentDifficulty))) + ")" : "";
+    var levelStr = (this.currentLevelSeed != null && this.currentLevelSeed > 0) ? String(this.currentLevelSeed) : (this.currentLevelID || "--");
+    var flameStr = this.fireBreathsLeft > 0 ? "\nFlame (G)" : "";
+    var lavaStr = "";
+    if (this.lavaBounceItemCollected) {
+      var lavaLeft = Math.max(0, 3 - (this.lavaBounceTotalUses || 0));
+      lavaStr = "\nLava: " + lavaLeft + " left";
+    }
+    var chompStr = this.chompCollected ? "\nChomp" : "";
+    var breathStr = "";
+    if (this.biomeId === "ocean" && this.breathMaxSeconds != null) {
+      var remaining = Math.max(0, this.breathRemainingSeconds != null ? this.breathRemainingSeconds : this.breathMaxSeconds);
+      breathStr = "\nBreath: " + remaining.toFixed(1) + "s";
+    }
+    this.hudText.setText(
+      "Score: " + this.score + "  Best: " + bestScoreStr + "  Time: " + this.currentTime.toFixed(2) + "s\nDots: " + this.dotsCollectedCount + "/" + NUM_DOTS + "  Lives: " + livesStr + "\nLevel: " + levelStr + diffStr + flameStr + lavaStr + chompStr + breathStr
+    );
+  };
+
+  GameScene.prototype.onOverlapLava = function (player, zone) {
+    if (this.gameWon || this.isDyingInLava) return;
+    if (this.cheatInvincible) return;
+    var maxBouncesPerRun = 2;
+    if (this.lavaBounceItemCollected && this.lavaBounceBounces < maxBouncesPerRun) {
+      // One touch per "fall": overlap can fire every frame, so only count once per entry.
+      var now = (typeof this.sceneTime === "number") ? this.sceneTime : 0;
+      var isNewTouch = now >= (this.lavaBounceCooldownUntil || 0);
+      if (isNewTouch) {
+        this.lavaBounceBounces++;
+        this.lavaBounceTotalUses++;
+        this.lavaBounceCooldownUntil = now + 400;
+      }
+      this.player.body.setVelocityY(LAVA_BOUNCE_VY);
+      var lavaTop = this.lavaZone.y - this.lavaZone.height / 2;
+      this.lavaY = lavaTop;
+      this.player.y = lavaTop - 2 - DRAGON_H / 2;
+      this.player.onGround = false;
+      this.player.jumpsLeft = 1;
+      this.player.boostAvailable = false;
+      this.doubleJumpUsedThisFlight = false;  // one double jump allowed after bounce
+      if (this.lavaBounceTotalUses >= 3) {
+        this.lavaBounceItemCollected = false;
+        this.lavaBounceBounces = 0;
+        this.playSfx(this.shieldLossSound, "shieldLoss");
+      }
+      return;
+    }
+    this.playSfx(this.lavaHitSound, "lavaHit");
+    this.isDyingInLava = true;
+    this.lavaDeathTimer = LAVA_DEATH_DURATION;
+  };
+
+  GameScene.prototype.onOverlapGoal = function (player, zone) {
+    if (this.gameWon) return;
+    this.gameWon = true;
+    this.addScore(POINTS_WIN);
+    this.winSequenceState = "entering";
+
+    this.player.body.setVelocity(0, 0);
+    this.player.body.setAllowGravity(false);
+    this.player.body.enable = false;
+
+    var goalCenterX = this.goal.x + this.goal.w / 2;
+    var goalCenterY = this.goal.y + this.goal.h / 2;
+
+    if (this.music && isMusicEnabled()) {
+      var startVol = this.music.volume !== undefined ? this.music.volume : 0.35;
+      this.tweens.addCounter({
+        from: startVol,
+        to: 0.12,
+        duration: 600,
+        onUpdate: function (tween) {
+          if (this.music && this.music.setVolume) this.music.setVolume(tween.getValue());
+        },
+        callbackScope: this
+      });
+    }
+    this.playSfx(this.winSound, "win");
+
+    var enterDuration = 1200;
+    this.tweens.add({
+      targets: this.player,
+      x: goalCenterX,
+      y: goalCenterY,
+      scaleX: 0,
+      scaleY: 0,
+      angle: 360,
+      duration: enterDuration,
+      ease: "Cubic.easeIn",
+      onComplete: function () {
+        this.winSequenceState = "holding";
+        this.winHoldTimer = 1.8;
+      },
+      callbackScope: this
+    });
+
+    var levelState = {
+      H: this.WORLD_H,
+      worldMinY: this.worldMinY,
+      worldMaxY: this.worldMaxY,
+      currentDifficulty: this.currentDifficulty,
+      biomeId: this.biomeId || "default",
+      slimeDefs: this.slimeDefs || [],
+      ceilingPoints: this.ceilingPoints || [],
+      stalactiteDefs: this.stalactiteDefs || [],
+      batDefs: this.batDefs || [],
+      itemDefs: this.itemDefs || [],
+      dotDefs: this.dotDefs || [],
+      checkpointDefs: this.checkpointDefs || [],
+      crawlerDefs: this.crawlerDefs || [],
+      cactusDefs: this.cactusDefs || [],
+      scorpionDefs: this.scorpionDefs || [],
+      buzzardDefs: this.buzzardDefs || [],
+      ventDefs: this.ventDefs || [],
+      urchinDefs: this.urchinDefs || [],
+      baracudaDefs: this.baracudaDefs || [],
+      jellyfishDefs: this.jellyfishDefs || [],
+      seagullDefs: this.seagullDefs || [],
+      waterSurfaceY: this.waterSurfaceY != null ? this.waterSurfaceY : null,
+      currentLevelSeed: this.currentLevelSeed
+    };
+
+    // Log completed run to profile (mock sign-in).
+    var username = "";
+    try {
+      var input = document.getElementById("usernameInput");
+      if (input && input.value) username = input.value.trim();
+    } catch (_) {}
+    if (!username) {
+      username = getProfileUsername();
+    }
+    appendProfileRun({
+      username: username || "",
+      timestamp: new Date().toISOString(),
+      levelId: this.currentLevelID || null,
+      seed: this.currentLevelSeed || null,
+      difficulty: this.currentDifficulty != null ? this.currentDifficulty : null,
+      timeSeconds: this.currentTime,
+      dotsCollected: this.dotsCollectedCount,
+      dotsTotal: NUM_DOTS,
+      score: this.score
+    });
+    if (typeof window.__dragonPopulatePlayedDropdown === "function") window.__dragonPopulatePlayedDropdown();
+
+    // For predefined levels, silently update stored bests (no naming prompts).
+    var data = loadAllLevels(this.WORLD_H);
+    var existing = data.levels.find(function (l) { return l.id === this.currentLevelID; }.bind(this));
+    if (existing) {
+      saveCompletedLevel(existing.id, existing.name, this.platformsData, this.goal, this.currentTime, this.dotsCollectedCount, levelState, window.__dragonPopulateLevelDropdown);
+    }
+    if (typeof this.bestScore !== "number" || !isFinite(this.bestScore) || this.currentTime < this.bestScore) {
+      this.bestScore = this.currentTime;
+    }
+    if (typeof window.__dragonPopulateLevelDropdown === "function") window.__dragonPopulateLevelDropdown();
+  };
+
+  GameScene.prototype.spawnDoubleJumpPlatform = function () {
+    var centerX = this.player.x;
+    var topY = this.player.y + DRAGON_H / 2;
+    var centerY = topY + DOUBLE_JUMP_PLAT_H / 2;
+    var glow = this.add.rectangle(centerX, centerY, DOUBLE_JUMP_PLAT_W + 6, DOUBLE_JUMP_PLAT_H + 4, 0x7c3aed);
+    glow.setDepth(14);
+    glow.setAlpha(0.6);
+    glow.setData("doubleJumpPlatform", true);
+    var plat = this.add.rectangle(centerX, centerY, DOUBLE_JUMP_PLAT_W, DOUBLE_JUMP_PLAT_H, 0xa78bfa);
+    plat.setDepth(15);
+    plat.setData("doubleJumpPlatform", true);
+    plat.setData("used", false);
+    this.doubleJumpPlatform = plat;
+    this.physics.add.existing(plat, true);
+    plat.body.checkCollision.down = false;
+    plat.body.checkCollision.left = false;
+    plat.body.checkCollision.right = false;
+    plat.body.updateFromGameObject = function () {};
+    this.platformGroup.add(plat);
+    plat.setData("glow", glow);
+    var scene = this;
+    this.time.delayedCall(DOUBLE_JUMP_PLAT_VISIBLE_MS, function () {
+      if (!plat.scene) return;
+      scene.tweens.add({
+        targets: [plat, glow],
+        alpha: 0,
+        duration: DOUBLE_JUMP_PLAT_FADE_DURATION,
+        onComplete: function () {
+          if (plat.scene && scene.platformGroup) scene.platformGroup.remove(plat);
+          if (glow.scene) glow.destroy();
+          plat.destroy();
+          if (scene.doubleJumpPlatform === plat) scene.doubleJumpPlatform = null;
+        }
+      });
+    });
+  };
+
+  GameScene.prototype.onOverlapDot = function (player, dot) {
+    if (dot.getData("collected")) return;
+    var idx = dot.getData("index");
+    this.dotsCollected[idx] = true;
+    this.dotsCollectedCount++;
+    this.addScore(POINTS_DOT);
+    this.playSfx(this.dotSound, "dot");
+    dot.setData("collected", true);
+    dot.setVisible(false);
+    dot.body.checkCollision.none = true;
+  };
+
+  GameScene.prototype.onOverlapCheckpoint = function (player, zone) {
+    var idx = zone.getData("index");
+    if (idx > this.lastCheckpointIndex) {
+      this.lastCheckpointIndex = idx;
+      this.playSfx(this.checkpointSound, "checkpoint");
+      var vfx = this.checkpointVfx[idx];
+      if (vfx) {
+        vfx.flag.fillColor = 0xffd93d;
+        vfx.pole.fillColor = 0xa3b18a;
+      }
+    }
+  };
+
+  GameScene.prototype.onOverlapItem = function (player, zone) {
+    if (zone.getData("collected")) return;
+    var it = zone.getData("item");
+    this.addScore(POINTS_POWERUP);
+    if (it.type === "lavaBounce") {
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = false;
+      this.lavaBounceItemCollected = true;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+    } else if (it.type === "fireTotem") {
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.chompCollected = false;
+      this.fireTotemCollected = true;
+      this.fireBreathsLeft = 1;
+    } else if (it.type === "chomp") {
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = true;
+    } else if (it.type === "airCanister") {
+      if (this.breathMaxSeconds != null) {
+        var addAir = Math.max(3.5, this.breathMaxSeconds * 0.42);
+        var cur = this.breathRemainingSeconds != null ? this.breathRemainingSeconds : this.breathMaxSeconds;
+        this.breathRemainingSeconds = Math.min(this.breathMaxSeconds, cur + addAir);
+        this.breathLowPlayed = false;
+      }
+      if (this.breathRefillSound) this.playSfx(this.breathRefillSound, "ocean_breath");
+    }
+    zone.setData("collected", true);
+    zone.setVisible(false);
+    zone.body.checkCollision.none = true;
+  };
+
+  GameScene.prototype.onOverlapSlime = function (player, slime) {
+    if (this.cheatInvincible) return;
+    if (slime.getData("dead")) return;
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killSlime(slime);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      // Using a shielded hit clears any lava shield as well (no stacking hits)
+      this.lavaBounceItemCollected = false;
+      return;
+    }
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapBat = function (player, bat) {
+    if (this.cheatInvincible) return;
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapCrawler = function (player, crawler) {
+    if (this.cheatInvincible) return;
+    if (crawler.getData("dead")) return;
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killCrawler(crawler);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapStalactite = function (player, st) {
+    if (this.cheatInvincible) return;
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapCactus = function (player, hitbox) {
+    if (this.cheatInvincible) return;  // god mode: ignore cacti (no bounce, no death, no chomp loss)
+    if (hitbox.getData("burned")) return;
+    if (this.cactusDeathDelay > 0) return;  // already in cactus-death delay
+    if (this.chompCollected) {
+      this.chompCollected = false;
+      this.playSfx(this.shieldLossSound, "shieldLoss");
+      // Bounce player back a short distance from the cactus (hurt but no death)
+      var dx = this.player.x - hitbox.x;
+      var dy = this.player.y - hitbox.y;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var bounceSpeed = 200;
+      this.player.body.setVelocity((dx / len) * bounceSpeed, (dy / len) * bounceSpeed);
+      return;
+    }
+    // Play cactus hurt sound if available, else death; then short delay so sound can play before respawn
+    if (this.cactusSound) this.playSfx(this.cactusSound, "cactus"); else this.playSfx(this.deathSound, "death");
+    this.cactusDeathDelay = 0.45;
+  };
+
+  GameScene.prototype.onOverlapUrchin = function (player, urchin) {
+    if (this.cheatInvincible) return;
+    if (this.urchinSound) this.playSfx(this.urchinSound, "ocean_urchin");
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapScorpion = function (player, scorp) {
+    if (this.cheatInvincible) return;
+    if (scorp.getData("dead")) return;
+    if (this.chompCollected) {
+      var front = (this.player.facing === 1 && scorp.x > this.player.x) || (this.player.facing === -1 && scorp.x < this.player.x);
+      if (front) {
+        this.playSfx(this.chompSound, "chomp");
+        this.spawnChompEffect(scorp.x, scorp.y);
+        this.killScorpion(scorp);
+        return;
+      }
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      return;
+    }
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killScorpion(scorp);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapBuzzard = function (player, buzz) {
+    if (this.cheatInvincible) return;
+    if (buzz.getData("dead")) return;
+    if (this.chompCollected) {
+      var front = (this.player.facing === 1 && buzz.x > this.player.x) || (this.player.facing === -1 && buzz.x < this.player.x);
+      if (front) {
+        this.playSfx(this.chompSound, "chomp");
+        this.spawnChompEffect(buzz.x, buzz.y);
+        this.killBuzzard(buzz);
+        return;
+      }
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      return;
+    }
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killBuzzard(buzz);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapNeedle = function (player, needle) {
+    if (this.cheatInvincible) return;
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapBaracuda = function (player, bar) {
+    if (this.cheatInvincible) return;
+    if (bar.getData("dead")) return;
+    if (this.chompCollected) {
+      var front = (this.player.facing === 1 && bar.x > this.player.x) || (this.player.facing === -1 && bar.x < this.player.x);
+      if (front) {
+        this.playSfx(this.chompSound, "chomp");
+        this.spawnChompEffect(bar.x, bar.y);
+        this.killBaracuda(bar);
+        return;
+      }
+      this.chompCollected = false;
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      return;
+    }
+    if (this.fireBreathsLeft > 0) {
+      if (this.shieldLossSound && isSfxEnabled()) this.shieldLossSound.play();
+      this.killBaracuda(bar);
+      this.fireBreathsLeft = 0;
+      this.fireTotemCollected = false;
+      this.lavaBounceItemCollected = false;
+      return;
+    }
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapJellyfish = function (player, jelly) {
+    if (this.cheatInvincible) return;
+    this.applyDeath();
+  };
+
+  GameScene.prototype.onOverlapSeagull = function (player, gull) {
+    if (this.cheatInvincible) return;
+    if (this.seagullSound) this.playSfx(this.seagullSound, "ocean_seagull");
+    this.applyDeath();
+  };
+
+  GameScene.prototype.burnCactus = function (hitbox) {
+    if (hitbox.getData("burned")) return;
+    hitbox.setData("burned", true);
+    if (hitbox.body) hitbox.body.checkCollision.none = true;
+    var gfx = hitbox.getData("gfx");
+    var cx = hitbox.x;
+    var cy = hitbox.y;
+    if (gfx) {
+      this.tweens.add({
+        targets: gfx,
+        alpha: 0,
+        duration: 380,
+        ease: "Power2.In",
+        onComplete: function () {
+          gfx.setVisible(false);
+          hitbox.setVisible(false);
+        },
+        callbackScope: this
+      });
+    } else {
+      hitbox.setVisible(false);
+    }
+    var smoke = this.add.graphics().setDepth(4);
+    smoke.fillStyle(0x555555, 0.7);
+    smoke.fillCircle(0, 0, 12);
+    smoke.fillCircle(-6, -4, 8);
+    smoke.setPosition(cx, cy);
+    smoke.setAlpha(1);
+    this.tweens.add({
+      targets: smoke,
+      alpha: 0,
+      scaleX: 2.5,
+      scaleY: 2.5,
+      duration: 400,
+      ease: "Power2.Out",
+      onComplete: function () { smoke.destroy(); },
+      callbackScope: this
+    });
+  };
+
+  // Simple death animations for monsters: shrink + fade, then disable collisions
+  GameScene.prototype.killSlime = function (slime) {
+    if (slime.getData("dead")) return;
+    slime.setData("dead", true);
+    this.addScore(POINTS_KILL);
+    slime.body.checkCollision.none = true;
+    // Hide eyes immediately
+    for (var i = 0; i < this.slimeEyes.length; i++) {
+      var info = this.slimeEyes[i];
+      if (info.body === slime) {
+        info.eye1.setVisible(false);
+        info.eye2.setVisible(false);
+      }
+    }
+    this.tweens.add({
+      targets: slime,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        slime.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killCrawler = function (crawler) {
+    if (crawler.getData("dead")) return;
+    crawler.setData("dead", true);
+    this.addScore(POINTS_KILL);
+    crawler.body.checkCollision.none = true;
+    // Hide eyes immediately
+    for (var i = 0; i < this.crawlerEyes.length; i++) {
+      var info = this.crawlerEyes[i];
+      if (info.body === crawler) {
+        info.eye1.setVisible(false);
+        info.eye2.setVisible(false);
+      }
+    }
+    this.tweens.add({
+      targets: crawler,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        crawler.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killBat = function (bat) {
+    this.addScore(POINTS_KILL);
+    // Find visual parts for this bat
+    var parts = null;
+    for (var i = 0; i < this.batParts.length; i++) {
+      if (this.batParts[i].body === bat) {
+        parts = this.batParts[i];
+        break;
+      }
+    }
+    var targets = parts
+      ? [bat, parts.leftWing, parts.rightWing, parts.eyeL, parts.eyeR]
+      : [bat];
+    this.tweens.add({
+      targets: targets,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        targets.forEach(function (t) { t.setVisible(false); });
+      }
+    });
+  };
+
+  GameScene.prototype.spawnChompEffect = function (x, y) {
+    var scene = this;
+    var top = this.add.triangle(x, y - 14, -6, -8, 6, -8, 0, 6, 0xffffff).setDepth(100);
+    var bot = this.add.triangle(x, y + 14, -6, 8, 6, 8, 0, -6, 0xffffff).setDepth(100);
+    this.tweens.add({
+      targets: [top, bot],
+      y: y,
+      duration: 80,
+      ease: "Power2",
+      onComplete: function () {
+        scene.tweens.add({
+          targets: [top, bot],
+          alpha: 0,
+          duration: 60,
+          onComplete: function () {
+            top.destroy();
+            bot.destroy();
+          }
+        });
+      }
+    });
+  };
+
+  GameScene.prototype.killScorpion = function (scorp) {
+    if (scorp.getData("dead")) return;
+    scorp.setData("dead", true);
+    this.playSfx(this.scorpionSound, "scorpion");
+    this.addScore(POINTS_KILL);
+    if (scorp.body) scorp.body.checkCollision.none = true;
+    this.tweens.add({
+      targets: scorp,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        scorp.setVisible(false);
+      }
+    });
+  };
+
+  GameScene.prototype.killBuzzard = function (buzz) {
+    if (buzz.getData("dead")) return;
+    buzz.setData("dead", true);
+    this.playSfx(this.buzzardSound, "buzzard");
+    this.addScore(POINTS_KILL);
+    if (buzz.body) buzz.body.checkCollision.none = true;
+    var parts = null;
+    for (var i = 0; i < this.buzzardParts.length; i++) {
+      if (this.buzzardParts[i].body === buzz) {
+        parts = this.buzzardParts[i];
+        break;
+      }
+    }
+    var targets = parts ? [buzz, parts.wingL, parts.wingR] : [buzz];
+    this.tweens.add({
+      targets: targets,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        targets.forEach(function (t) { t.setVisible(false); });
+      }
+    });
+  };
+
+  GameScene.prototype.killBaracuda = function (bar) {
+    if (bar.getData("dead")) return;
+    bar.setData("dead", true);
+    if (this.baracudaSound) this.playSfx(this.baracudaSound, "baracuda");
+    this.addScore(POINTS_KILL);
+    if (bar.body) bar.body.checkCollision.none = true;
+    var parts = [bar];
+    ["tailPart", "headPart", "eyeL", "eyeR", "pupL", "pupR"].forEach(function (k) {
+      var p = bar.getData(k);
+      if (p) parts.push(p);
+    });
+    this.tweens.add({
+      targets: parts,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: 220,
+      onComplete: function () {
+        parts.forEach(function (p) { if (p && p.setVisible) p.setVisible(false); });
+      }
+    });
+  };
+
+  /** Ocean vent hole: pull brings you in; death only after shrink-into-hole animation (like goal). */
+  GameScene.prototype.startVentSinkDeath = function (vent) {
+    if (this.cheatInvincible || this.gameWon || this.ventSinkActive || this.isDyingInLava) return;
+    this.ventSinkActive = true;
+    this.player.body.setVelocity(0, 0);
+    this.player.body.enable = false;
+    var holeCx = vent.x;
+    var holeCy = vent.holeCy != null ? vent.holeCy : vent.yTop + 8;
+    var enterDuration = 1100;
+    var scene = this;
+    this.tweens.add({
+      targets: this.player,
+      x: holeCx,
+      y: holeCy,
+      scaleX: 0,
+      scaleY: 0,
+      angle: 360,
+      duration: enterDuration,
+      ease: "Cubic.easeIn",
+      onComplete: function () {
+        scene.applyDeath();
+      },
+      callbackScope: this
+    });
+  };
+
+  GameScene.prototype.applyDeath = function (skipDeathSound) {
+    if (this.cheatInvincible) return;
+    if (!skipDeathSound && !this.isDyingInLava) this.playSfx(this.deathSound, "death");
+    this.lives--;
+    if (this.cheatInfiniteLives) this.lives = LIVES_START;
+    if (this.lives <= 0) {
+      this.lastCheckpointIndex = -1;
+      this.lives = LIVES_START;
+    }
+    this.resetPlayer();
+  };
+
+  GameScene.prototype.applyCheat = function (code) {
+    code = (code || "").trim().toLowerCase();
+    if (!code) return "Enter a code.";
+    this.cheatsUsedThisRun = true;
+    window.__dragonCheatsUsedThisRun = true;
+    if (code === "orb") {
+      if (this.lavaBounceItemCollected) {
+        this.lavaBounceItemCollected = false;
+        this.lavaBounceBounces = 0;
+        this.lavaBounceTotalUses = 0;
+        this.lavaBounceCooldownUntil = 0;
+        return "Lava orb removed.";
+      }
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = false;
+      this.lavaBounceItemCollected = true;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      return "Lava orb added.";
+    }
+    if (code === "flame") {
+      if (this.biomeId === "ocean") return "Fire totem is not available in Ocean.";
+      if (this.fireTotemCollected || this.fireBreathsLeft > 0) {
+        this.fireTotemCollected = false;
+        this.fireBreathsLeft = 0;
+        return "Fire totem removed.";
+      }
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.chompCollected = false;
+      this.fireTotemCollected = true;
+      this.fireBreathsLeft = 1;
+      return "Fire totem added.";
+    }
+    if (code === "chomp") {
+      if (this.biomeId !== "desert") return "Chomp is Desert only.";
+      if (this.chompCollected) {
+        this.chompCollected = false;
+        return "Chomp removed.";
+      }
+      this.lavaBounceItemCollected = false;
+      this.lavaBounceBounces = 0;
+      this.lavaBounceTotalUses = 0;
+      this.lavaBounceCooldownUntil = 0;
+      this.fireTotemCollected = false;
+      this.fireBreathsLeft = 0;
+      this.chompCollected = true;
+      return "Chomp added.";
+    }
+    if (code === "god") {
+      this.cheatInvincible = !this.cheatInvincible;
+      window.__dragonCheatInvincible = this.cheatInvincible;
+      // When toggling god mode, fully reset the player so visuals/physics are in a clean state.
+      this.isDyingInLava = false;
+      this.cactusDeathDelay = 0;
+      this.winSequenceState = "idle";
+      this.resetPlayer();
+      return this.cheatInvincible ? "Invincibility on." : "Invincibility off.";
+    }
+    if (code === "lives") {
+      this.cheatInfiniteLives = !this.cheatInfiniteLives;
+      window.__dragonCheatInfiniteLives = this.cheatInfiniteLives;
+      if (this.cheatInfiniteLives) this.lives = LIVES_START;
+      return this.cheatInfiniteLives ? "Infinite lives on." : "Infinite lives off.";
+    }
+    this.cheatsUsedThisRun = false;
+    return "Unknown code.";
+  };
+
+  GameScene.prototype.resetPlayer = function () {
+    this.tweens.killTweensOf(this.player);
+    this.ventSinkActive = false;
+    if (this.lastCheckpointIndex === -1) this.score = 0;
+    // Restore platforms from base (drop platforms reset)
+    this.platformsData.length = 0;
+    for (var i = 0; i < this.basePlatformsData.length; i++) {
+      this.platformsData.push(JSON.parse(JSON.stringify(this.basePlatformsData[i])));
+    }
+    var platformColor;
+    if (this.biomeId === "desert") {
+      platformColor = 0xc4a574;
+    } else if (this.biomeId === "ocean") {
+      platformColor = 0x0f766e;
+    } else {
+      platformColor = 0x8b5cf6;
+    }
+    // Rebuild static platform bodies from current platform data
+    this.platformGroup.clear(true, true);
+    this.platformSprites = [];
+    for (var j = 0; j < this.platformsData.length; j++) {
+      var p2 = this.platformsData[j];
+      var pCol2 = platformColor;
+      if (this.biomeId === "ocean") {
+        if (p2.isFloor) pCol2 = 0xc4a574;
+        else if (p2.isCoral) pCol2 = 0x0d9488;
+      }
+      var rect2 = this.add.rectangle(p2.x + p2.w / 2, p2.y + p2.h / 2, p2.w, p2.h, pCol2);
+      this.physics.add.existing(rect2, true);
+      rect2.body.checkCollision.down = false;
+      rect2.body.checkCollision.left = false;
+      rect2.body.checkCollision.right = false;
+      this.platformGroup.add(rect2);
+      rect2.setData("platformIndex", j);
+      rect2.setData("platformData", p2);
+      this.platformSprites.push(rect2);
+    }
+    var startX, startY;
+    if (this.lastCheckpointIndex >= 0 && this.checkpointDefs[this.lastCheckpointIndex]) {
+      var cp = this.checkpointDefs[this.lastCheckpointIndex];
+      var cpplat = this.platformsData[cp.platformIndex];
+      if (cpplat) {
+        startX = cpplat.x + cpplat.w * cp.offset;
+        startY = cpplat.y - DRAGON_H / 2 - 8;
+      } else {
+        var sp = this.platformsData[0];
+        startX = sp.x + sp.w / 2;
+        startY = sp.y - DRAGON_H / 2 - 8;
+      }
+    } else {
+      var startPlat = this.platformsData[0];
+      startX = startPlat.x + startPlat.w / 2;
+      startY = startPlat.y - DRAGON_H / 2 - 8;
+    }
+    this.player.x = startX;
+    this.player.y = startY;
+    this.player.body.setVelocity(0, 0);
+    this.player.body.enable = true;
+    this.player.setScale(1, 1);
+    this.player.angle = 0;
+    this.player.alpha = 1;
+    if (this.playerHead) {
+      this.playerHead.setScale(1, 1);
+      this.playerHead.alpha = 1;
+    }
+    if (this.playerEye) {
+      this.playerEye.setScale(1, 1);
+      this.playerEye.alpha = 1;
+    }
+    if (this.playerUpperJaw) this.playerUpperJaw.setScale(1, 1);
+    if (this.playerLowerJaw) this.playerLowerJaw.setScale(1, 1);
+    if (this.chompTooth1) this.chompTooth1.setScale(1, 1);
+    if (this.chompTooth2) this.chompTooth2.setScale(1, 1);
+    this.player.facing = 1;
+    this.player.onGround = true;
+    this.player.jumpsLeft = 2;
+    this.player.boostAvailable = true;
+    this.player.boostFramesLeft = 0;
+    this.player.oceanBoostFramesLeft = 0;
+    this.player.oceanBoostCooldownLeft = 0;
+    this.player.timeInAir = 0;
+    this.doubleJumpUsedThisFlight = false;
+
+    // Reset default biome enemies
+    if (this.biomeId === "default") {
+    var slimeW = 22, slimeH = 18;
+    for (var si = 0; si < this.slimes.length; si++) {
+      var slime = this.slimes[si];
+      var def = this.slimeDefs[si];
+      var plat = this.platformsData[def.platformIndex];
+      if (!plat) continue;
+      var baseX = plat.x + def.offset * plat.w - slimeW / 2;
+      var baseY = plat.y - slimeH;
+      slime.x = baseX + slimeW / 2;
+      slime.y = baseY + slimeH / 2;
+      slime.body.setVelocity(0, 0);
+      slime.setData("baseX", baseX + slimeW / 2);
+      slime.setData("baseY", baseY + slimeW / 2);
+      slime.setData("state", "waiting");
+      slime.setData("timer", (60 + Math.random() * 120) / REFERENCE_FPS);
+      slime.setData("vy", 0);
+      slime.setData("dead", false);
+      slime.setVisible(true);
+      slime.scaleX = 1;
+      slime.scaleY = 1;
+      slime.alpha = 1;
+      slime.body.checkCollision.none = false;
+    }
+    // Reset slime eyes
+    for (var se = 0; se < this.slimeEyes.length; se++) {
+      var seInfo = this.slimeEyes[se];
+      var sb = seInfo.body;
+      seInfo.eye1.setVisible(!sb.getData("dead"));
+      seInfo.eye2.setVisible(!sb.getData("dead"));
+    }
+    for (var bi = 0; bi < this.bats.length; bi++) {
+      var bat = this.bats[bi];
+      var bdef = this.batDefs[bi];
+      bat.x = bdef.x + BAT_W / 2;
+      bat.y = bdef.y + BAT_H / 2;
+      bat.body.setVelocity(0, 0);
+      bat.setVisible(true);
+      bat.scaleX = 1;
+      bat.scaleY = 1;
+      bat.alpha = 1;
+    }
+    // Reset bat parts
+    for (var bp = 0; bp < this.batParts.length; bp++) {
+      var bInfo = this.batParts[bp];
+      var bb = bInfo.body;
+      bInfo.leftWing.setVisible(true);
+      bInfo.rightWing.setVisible(true);
+      bInfo.eyeL.setVisible(true);
+      bInfo.eyeR.setVisible(true);
+      bInfo.leftWing.x = bb.x - 10;
+      bInfo.leftWing.y = bb.y;
+      bInfo.rightWing.x = bb.x + 10;
+      bInfo.rightWing.y = bb.y;
+      bInfo.eyeL.x = bb.x - 3;
+      bInfo.eyeL.y = bb.y - 3;
+      bInfo.eyeR.x = bb.x + 3;
+      bInfo.eyeR.y = bb.y - 3;
+    }
+    for (var ci = 0; ci < this.crawlers.length; ci++) {
+      var crawler = this.crawlers[ci];
+      var cdef = this.crawlerDefs[ci];
+      var cplat = this.platformsData[cdef.platformIndex];
+      if (!cplat) continue;
+      var pos = crawlerPerimeterPosition(cplat, cdef.offset);
+      crawler.x = pos.cx;
+      crawler.y = pos.cy;
+      crawler.setData("offset", cdef.offset);
+      crawler.setData("dead", false);
+      crawler.setVisible(true);
+      crawler.body.checkCollision.none = false;
+    }
+    // Reset crawler eyes
+    for (var ce = 0; ce < this.crawlerEyes.length; ce++) {
+      var cInfo = this.crawlerEyes[ce];
+      var cb = cInfo.body;
+      cInfo.eye1.setVisible(!cb.getData("dead"));
+      cInfo.eye2.setVisible(!cb.getData("dead"));
+      cInfo.eye1.x = cb.x - 3;
+      cInfo.eye1.y = cb.y - 3;
+      cInfo.eye2.x = cb.x + 3;
+      cInfo.eye2.y = cb.y - 3;
+    }
+    } else if (this.biomeId === "desert") {
+      // Reset scorpions to start positions
+      for (var sci = 0; sci < this.scorpions.length; sci++) {
+        var scorp = this.scorpions[sci];
+        var sdef = this.scorpionDefs[sci];
+        if (sdef) {
+          scorp.x = sdef.startX;
+          scorp.setData("direction", sdef.direction);
+        }
+        var splat = this.platformsData[sdef.platformIndex];
+        if (splat) scorp.y = splat.y - SCORPION_H / 2;
+        scorp.setData("stepTimer", Math.random() * SCORPION_STEP_INTERVAL);
+        scorp.body.updateFromGameObject();
+      }
+      // Reset buzzards to initial positions
+      for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+        var buzz = this.buzzards[bzi];
+        var bzdef = this.buzzardDefs[bzi];
+        if (bzdef) {
+          buzz.x = bzdef.x + BUZZARD_W / 2;
+          buzz.y = bzdef.y + BUZZARD_H / 2;
+        }
+        buzz.body.setVelocity(0, 0);
+        buzz.setData("vx", 0);
+        buzz.setData("vy", 0);
+        buzz.body.updateFromGameObject();
+      }
+      for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
+        var bzInfo = this.buzzardParts[bpi];
+        bzInfo.wingL.x = bzInfo.body.x - 8;
+        bzInfo.wingL.y = bzInfo.body.y + 2;
+        bzInfo.wingR.x = bzInfo.body.x + 8;
+        bzInfo.wingR.y = bzInfo.body.y + 2;
+      }
+      // Reset needle-shooter cacti state
+      for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+        this.cactusHitboxes[cai].setData("shakeTimer", 0);
+        this.cactusHitboxes[cai].setData("fired", false);
+      }
+      // Destroy all needles
+      if (this.needleGroup) {
+        this.needleGroup.clear(true, true);
+      }
+    }
+
+    this.lavaBounceItemCollected = false;
+    this.lavaBounceBounces = 0;
+    this.lavaBounceTotalUses = 0;
+    this.lavaBounceCooldownUntil = 0;
+    this.fireBreathsLeft = 0;
+    this.fireTotemCollected = false;
+    this.breathActiveTime = 0;
+    this.chompCollected = false;
+    if (this.biomeId === "ocean") {
+      var dBr = Math.max(1, Math.min(30, typeof this.currentDifficulty === "number" ? this.currentDifficulty : 12));
+      var tBr = (dBr - 1) / 29;
+      this.breathMaxSeconds = 7.5 + (1 - tBr) * 11;
+      this.breathRemainingSeconds = this.breathMaxSeconds;
+      this.breathLowPlayed = false;
+    } else {
+      this.breathMaxSeconds = null;
+      this.breathRemainingSeconds = null;
+      this.breathLowPlayed = false;
+    }
+    if (this.lastCheckpointIndex < 0) {
+      this.dotsCollected = this.dotDefs.map(function () { return false; });
+      this.dotsCollectedCount = 0;
+      for (var di = 0; di < this.dotSprites.length; di++) {
+        this.dotSprites[di].setVisible(true);
+        this.dotSprites[di].setData("collected", false);
+        this.dotSprites[di].body.checkCollision.none = false;
+      }
+      for (var ii = 0; ii < this.itemZones.length; ii++) {
+        this.itemZones[ii].setVisible(true);
+        this.itemZones[ii].setData("collected", false);
+        this.itemZones[ii].body.checkCollision.none = false;
+      }
+      for (var cvi = 0; cvi < this.checkpointVfx.length; cvi++) {
+        var vfx = this.checkpointVfx[cvi];
+        if (vfx && vfx.flag && vfx.pole) {
+          vfx.flag.fillColor = 0x48bb78;
+          vfx.pole.fillColor = 0x718096;
+        }
+      }
+    }
+    if (this.lastCheckpointIndex < 0) {
+      this.timerStarted = false;
+      this.startTime = 0;
+      this.currentTime = 0;
+    }
+    this.gameWon = false;
+    this.winSequenceState = "idle";
+    this.winHoldTimer = 0;
+    this.isDyingInLava = false;
+    this.lavaDeathTimer = 0;
+    this.cactusDeathDelay = 0;
+  };
+
+  // 0 = too far to hear, 1 = at player; used for distance-based SFX volume
+  GameScene.prototype.getProximityVolume = function (x, y) {
+    var dx = this.player.x - x;
+    var dy = this.player.y - y;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d >= HEARING_MAX_DISTANCE) return 0;
+    return 1 - d / HEARING_MAX_DISTANCE;
+  };
+
+  GameScene.prototype.showWinOverlay = function (fadeIn) {
+    var el = document.getElementById("winOverlay");
+    if (!el) return;
+    var userId = getScoreUserId();
+    if (!this.cheatsUsedThisRun) {
+      pushScoreForLevel(this.currentLevelID || "", userId, this.score, this.currentTime);
+      if (this.score > (this.bestScorePoints || 0)) this.bestScorePoints = this.score;
+    }
+    if (fadeIn) {
+      el.style.display = "flex";
+      el.style.opacity = "0";
+      el.style.transition = "opacity 0.5s ease";
+      var scene = this;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          el.style.opacity = "1";
+        });
+      });
+    } else {
+      el.style.display = "flex";
+      el.style.opacity = "1";
+      el.style.transition = "";
+    }
+    var timeEl = document.getElementById("winTime");
+    var scoreEl = document.getElementById("winScore");
+    var dotsEl = document.getElementById("winDots");
+    var bestEl = document.getElementById("winBest");
+    if (timeEl) timeEl.textContent = "Time: " + this.currentTime.toFixed(2) + "s";
+    if (scoreEl) scoreEl.textContent = String(this.score);
+    if (dotsEl) dotsEl.textContent = this.dotsCollectedCount + "/" + NUM_DOTS;
+    if (bestEl) {
+      if (this.cheatsUsedThisRun) {
+        bestEl.textContent = "Cheats used — score not saved";
+      } else if (this.score === this.bestScorePoints && this.bestScorePoints > 0) {
+        bestEl.textContent = "Best score: " + this.bestScorePoints + " (new!)";
+      } else if (this.bestScorePoints != null && this.bestScorePoints > 0) {
+        bestEl.textContent = "Best score: " + this.bestScorePoints;
+      } else {
+        bestEl.textContent = "Best score: --";
+      }
+    }
+    var nextBtn = document.getElementById("winNextLevelBtn");
+    if (nextBtn) {
+      var data = loadAllLevels(this.WORLD_H);
+      if (data.levels && data.levels.length > 0) {
+        var idx = data.levels.findIndex(function (l) { return l.id === this.currentLevelID; }.bind(this));
+        nextBtn.style.display = "";
+        nextBtn.textContent = (idx >= 0 && idx < data.levels.length - 1) ? "Next level →" : "First level →";
+      } else {
+        nextBtn.style.display = "none";
+      }
+    }
+  };
+
+  GameScene.prototype.update = function (time, delta) {
+    this.sceneTime = (typeof time === "number") ? time : 0;
+    var dt = delta / 1000;
+    if (dt > 0.05) dt = 0.05;
+
+    if (this.godModeBorder) this.godModeBorder.setVisible(!!this.cheatInvincible);
+
+    if (this.gameWon) {
+      if (this.playerHead && this.playerHead.active) {
+        var fx = this.player.facing;
+        var sx = this.player.scaleX;
+        var sy = this.player.scaleY;
+        this.playerHead.x = this.player.x + fx * 15 * sx;
+        this.playerHead.y = this.player.y;
+        this.playerHead.scaleX = sx;
+        this.playerHead.scaleY = sy;
+        this.playerEye.x = this.player.x + fx * 8 * sx;
+        this.playerEye.y = this.player.y - 5;
+        this.playerEye.scaleX = sx;
+        this.playerEye.scaleY = sy;
+        var mouthX = this.player.x + fx * 15 * sx;
+        var mouthY = this.player.y;
+        if (this.playerUpperJaw && this.playerUpperJaw.active) {
+          this.playerUpperJaw.x = mouthX;
+          this.playerUpperJaw.y = mouthY - 4 * sy;
+          this.playerUpperJaw.scaleX = sx;
+          this.playerUpperJaw.scaleY = sy;
+        }
+        if (this.playerLowerJaw && this.playerLowerJaw.active) {
+          this.playerLowerJaw.x = mouthX;
+          this.playerLowerJaw.y = mouthY + 4 * sy;
+          this.playerLowerJaw.scaleX = sx;
+          this.playerLowerJaw.scaleY = sy;
+        }
+        if (this.chompTooth1 && this.chompTooth1.active) {
+          this.chompTooth1.x = mouthX;
+          this.chompTooth1.y = mouthY - 2 * sy;
+          this.chompTooth1.scaleX = sx;
+          this.chompTooth1.scaleY = sy;
+        }
+        if (this.chompTooth2 && this.chompTooth2.active) {
+          this.chompTooth2.x = mouthX;
+          this.chompTooth2.y = mouthY + 2 * sy;
+          this.chompTooth2.scaleX = sx;
+          this.chompTooth2.scaleY = sy;
+        }
+      }
+      if (this.winSequenceState === "holding") {
+        this.winHoldTimer -= dt;
+        if (this.winHoldTimer <= 0) {
+          this.winSequenceState = "done";
+          this.showWinOverlay(true);
+        }
+      }
+      return;
+    }
+
+    if (this.ventSinkActive) {
+      if (this.playerHead && this.playerHead.active) {
+        var fxv = this.player.facing;
+        var sxv = this.player.scaleX;
+        var syv = this.player.scaleY;
+        this.playerHead.x = this.player.x + fxv * 15 * sxv;
+        this.playerHead.y = this.player.y;
+        this.playerHead.scaleX = sxv;
+        this.playerHead.scaleY = syv;
+        this.playerEye.x = this.player.x + fxv * 8 * sxv;
+        this.playerEye.y = this.player.y - 5;
+        this.playerEye.scaleX = sxv;
+        this.playerEye.scaleY = syv;
+        var mouthXV = this.player.x + fxv * 15 * sxv;
+        var mouthYV = this.player.y;
+        if (this.playerUpperJaw && this.playerUpperJaw.active) {
+          this.playerUpperJaw.x = mouthXV;
+          this.playerUpperJaw.y = mouthYV - 4 * syv;
+          this.playerUpperJaw.scaleX = sxv;
+          this.playerUpperJaw.scaleY = syv;
+        }
+        if (this.playerLowerJaw && this.playerLowerJaw.active) {
+          this.playerLowerJaw.x = mouthXV;
+          this.playerLowerJaw.y = mouthYV + 4 * syv;
+          this.playerLowerJaw.scaleX = sxv;
+          this.playerLowerJaw.scaleY = syv;
+        }
+        if (this.chompTooth1 && this.chompTooth1.active) {
+          this.chompTooth1.x = mouthXV;
+          this.chompTooth1.y = mouthYV - 2 * syv;
+          this.chompTooth1.scaleX = sxv;
+          this.chompTooth1.scaleY = syv;
+        }
+        if (this.chompTooth2 && this.chompTooth2.active) {
+          this.chompTooth2.x = mouthXV;
+          this.chompTooth2.y = mouthYV + 2 * syv;
+          this.chompTooth2.scaleX = sxv;
+          this.chompTooth2.scaleY = syv;
+        }
+      }
+      return;
+    }
+
+    if (this.cactusDeathDelay > 0) {
+      this.cactusDeathDelay -= dt;  // dt is already in seconds (delta/1000 at top of update)
+      this.player.body.setVelocity(0, 0);
+      var hurtFlash = Math.sin((0.45 - this.cactusDeathDelay) * 24) > 0;
+      var hurtColor = hurtFlash ? 0xcc2222 : 0x4a9b4a;
+      this.player.fillColor = hurtColor;
+      this.playerHead.fillColor = hurtColor;
+      if (this.playerHead) this.playerHead.setVisible(true);
+      if (this.playerUpperJaw) this.playerUpperJaw.setVisible(false);
+      if (this.playerLowerJaw) this.playerLowerJaw.setVisible(false);
+      if (this.chompTooth1) this.chompTooth1.setVisible(false);
+      if (this.chompTooth2) this.chompTooth2.setVisible(false);
+      if (this.cactusDeathDelay <= 0) {
+        this.cactusDeathDelay = 0;
+        this.applyDeath(true);
+      }
+      return;
+    }
+
+    if (this.isDyingInLava) {
+      this.lavaDeathTimer -= dt;
+      // Slow sink into lava with fade-out
+      this.player.y += 20 * dt;
+      this.player.body.setVelocity(this.player.body.velocity.x * 0.9, 0);
+      var tDeath = 1 - (this.lavaDeathTimer / LAVA_DEATH_DURATION);
+      if (tDeath < 0) tDeath = 0;
+      if (tDeath > 1) tDeath = 1;
+      var alpha = 1 - tDeath;
+      this.player.alpha = alpha;
+      this.playerHead.alpha = alpha;
+      this.playerEye.alpha = alpha;
+      if (this.playerUpperJaw) this.playerUpperJaw.alpha = alpha;
+      if (this.playerLowerJaw) this.playerLowerJaw.alpha = alpha;
+      if (this.chompTooth1) this.chompTooth1.alpha = alpha;
+      if (this.chompTooth2) this.chompTooth2.alpha = alpha;
+      if (this.lavaDeathTimer <= 0) {
+        this.playSfx(this.deathSound, "death");
+        this.applyDeath();
+        this.player.alpha = 1;
+        this.playerHead.alpha = 1;
+        this.playerEye.alpha = 1;
+        if (this.playerUpperJaw) this.playerUpperJaw.alpha = 1;
+        if (this.playerLowerJaw) this.playerLowerJaw.alpha = 1;
+        if (this.chompTooth1) this.chompTooth1.alpha = 1;
+        if (this.chompTooth2) this.chompTooth2.alpha = 1;
+      }
+      return;
+    }
+
+    var keys = window.__dragonKeys;
+    if (!this.timerStarted && (keys.left || keys.right || keys.jump || keys.boost || keys.breath || keys.down)) {
+      this.timerStarted = true;
+      this.startTime = time / 1000;
+    }
+    if (this.timerStarted) this.currentTime = (time / 1000) - this.startTime;
+
+    var creatureSpeedMult = 1;
+    if (this.currentDifficulty != null && typeof this.currentDifficulty === "number") {
+      var diffT = (Math.max(1, Math.min(30, this.currentDifficulty)) - 1) / 29;
+      creatureSpeedMult = 1 + 0.6 * diffT;
+    }
+
+    // Ocean: determine whether the dragon is underwater vs at the surface (for physics and breath).
+    var underwater = false;
+    if (this.biomeId === "ocean") {
+      var surfaceY = (this.waterSurfaceY != null ? this.waterSurfaceY : (this.worldMinY + 60));
+      underwater = (this.player.y - DRAGON_H * 0.25) > surfaceY;
+      this.isUnderwater = underwater;
+    } else {
+      this.isUnderwater = false;
+    }
+
+    // Breath meter (Ocean only)
+    if (this.biomeId === "ocean" && !this.gameWon && !this.isDyingInLava && this.cactusDeathDelay <= 0) {
+      if (underwater) {
+        if (this.breathMaxSeconds != null) {
+          if (this.breathRemainingSeconds == null) this.breathRemainingSeconds = this.breathMaxSeconds;
+          this.breathRemainingSeconds -= dt;
+          var lowThreshold = this.breathMaxSeconds * 0.25;
+          if (!this.breathLowPlayed && this.breathLowSound && this.breathRemainingSeconds <= lowThreshold && this.breathRemainingSeconds > 0) {
+            this.playSfx(this.breathLowSound, "ocean_breathLow");
+            this.breathLowPlayed = true;
+          }
+          if (this.breathRemainingSeconds <= 0) {
+            this.breathRemainingSeconds = 0;
+            this.applyDeath();
+            return;
+          }
+        }
+      } else if (this.breathMaxSeconds != null) {
+        var wasLow = this.breathRemainingSeconds != null && this.breathRemainingSeconds < this.breathMaxSeconds;
+        this.breathRemainingSeconds = this.breathMaxSeconds;
+        if (wasLow && this.breathRefillSound) {
+          this.playSfx(this.breathRefillSound, "ocean_breath");
+        }
+        this.breathLowPlayed = false;
+      }
+    }
+
+    // Player movement - fixed hitbox: we only change velocity
+    var currentVy = this.player.body.velocity.y;
+    var currentVx = this.player.body.velocity.x;
+    if (this.biomeId === "ocean" && this.isUnderwater) {
+      this.player.body.setVelocity(currentVx * 0.88, currentVy);
+    } else {
+      this.player.body.setVelocity(0, currentVy);
+    }
+    var moveMult = (this.biomeId === "ocean" && this.isUnderwater) ? 0.52 : 1;
+    var currentMoveSpeed = moveSpeed * moveMult;
+    if (keys.left) {
+      this.player.body.setVelocityX(-currentMoveSpeed);
+      this.player.facing = -1;
+    }
+    if (keys.right) {
+      this.player.body.setVelocityX(currentMoveSpeed);
+      this.player.facing = 1;
+    }
+    // Change player color for buffs (only one power-up at a time):
+    // - lava orb: amber/gold blink; fire totem: solid orange; chomp (Desert): yellow/green blink
+    var dragonColor = 0x4a9b4a;
+    var fireActive = (this.fireBreathsLeft > 0 || this.fireTotemCollected);
+    var orbActive = this.lavaBounceItemCollected;
+    var chompActive = this.chompCollected;
+    var period = 0.6;
+    var tSec = time / 1000;
+    var phase = (tSec / period) % 1;
+    var bright = phase < 0.5;
+    if (orbActive) {
+      dragonColor = bright ? 0xfff3c4 : 0xf97316;
+    } else if (fireActive) {
+      dragonColor = 0xe05c20;
+    } else if (chompActive) {
+      dragonColor = bright ? 0xfacc15 : 0x84cc16;
+    }
+    this.player.fillColor = dragonColor;
+    this.playerHead.fillColor = dragonColor;
+    this.playerEye.fillColor = 0xffffff;
+    var fx = this.player.facing;
+    var mouthX = this.player.x + fx * 15;
+    var mouthY = this.player.y;
+    if (chompActive) {
+      this.playerHead.setVisible(false);
+      this.playerUpperJaw.setVisible(true);
+      this.playerLowerJaw.setVisible(true);
+      this.playerUpperJaw.fillColor = dragonColor;
+      this.playerLowerJaw.fillColor = dragonColor;
+      this.playerUpperJaw.setPosition(mouthX, mouthY - 4);
+      this.playerLowerJaw.setPosition(mouthX, mouthY + 4);
+      this.chompTooth1.setPosition(mouthX, mouthY - 2);
+      this.chompTooth2.setPosition(mouthX, mouthY + 2);
+      this.chompTooth1.setVisible(true);
+      this.chompTooth2.setVisible(true);
+    } else {
+      this.playerHead.setVisible(true);
+      this.playerUpperJaw.setVisible(false);
+      this.playerLowerJaw.setVisible(false);
+      this.chompTooth1.setVisible(false);
+      this.chompTooth2.setVisible(false);
+    }
+    this.playerHead.x = mouthX;
+    this.playerHead.y = mouthY;
+    this.playerEye.x = this.player.x + fx * 8;
+    this.playerEye.y = this.player.y - 5;
+
+    // Lenient "on a real platform" check so jump from the very edge counts as ground jump
+    this.standingPlatformIndex = -1;
+    var playerLeft = this.player.x - DRAGON_W / 2;
+    var playerRight = this.player.x + DRAGON_W / 2;
+    var playerBottom = this.player.y + DRAGON_H / 2;
+    for (var pk = 0; pk < this.platformsData.length; pk++) {
+      var plat = this.platformsData[pk];
+      if (!plat || plat.dropping) continue;
+      var platLeft = plat.x - GROUND_EDGE_TOLERANCE;
+      var platRight = plat.x + (plat.w || 0) + GROUND_EDGE_TOLERANCE;
+      var platTop = plat.y;
+      var platBottom = plat.y + (plat.h || 16) + 2;
+      if (playerRight >= platLeft && playerLeft <= platRight &&
+          playerBottom >= platTop - GROUND_TOP_TOLERANCE && playerBottom <= platBottom) {
+        this.standingPlatformIndex = pk;
+        break;
+      }
+    }
+    var physicsGround = this.player.body.blocked.down || this.player.body.touching.down;
+    var onGround = physicsGround || this.standingPlatformIndex >= 0;
+    if (onGround) {
+      this.player.timeInAir = 0;
+      // Landing on a real platform (physics contact) resets double jump for next flight
+      if (physicsGround && this.standingPlatformIndex >= 0) this.doubleJumpUsedThisFlight = false;
+      // Landing on a platform resets the per-run lava bounce counter
+      this.lavaBounceBounces = 0;
+    } else {
+      this.player.timeInAir += dt;
+    }
+
+    var jumpPower = (this.biomeId === "ocean" && this.isUnderwater) ? jumpStrength * 0.8 : jumpStrength;
+
+    if (this.biomeId === "ocean" && this.isUnderwater) {
+      // Swim stroke (James Pond–style): thrust only while submerged — not "air jumps" at the surface.
+      if (keys.jump && window.__dragonJumpKeyReleased) {
+        window.__dragonJumpKeyReleased = false;
+        var swimDir = (this.player.facing === -1 ? -1 : 1);
+        var swimH = moveSpeed * 0.55;
+        var swimV = -jumpStrength * 0.82;
+        this.player.body.setVelocity(
+          this.player.body.velocity.x + swimDir * swimH,
+          swimV
+        );
+        this.playSfx(this.jumpSound, "jump");
+      } else if (!keys.jump && !window.__dragonJumpKeyReleased) {
+        window.__dragonJumpKeyReleased = true;
+      }
+    } else if (this.biomeId !== "ocean") {
+      if (keys.jump && onGround) {
+        this.player.body.setVelocityY(-jumpPower);
+        this.player.jumpsLeft = 1;
+        window.__dragonJumpKeyReleased = false;
+        this.playSfx(this.jumpSound, "jump");
+      } else if (keys.jump && !onGround && !this.doubleJumpUsedThisFlight && window.__dragonJumpKeyReleased) {
+        this.player.body.setVelocityY(-jumpPower);
+        this.doubleJumpUsedThisFlight = true;
+        this.player.jumpsLeft = 0;
+        window.__dragonJumpKeyReleased = false;
+        this.playSfx(this.jumpSound, "jump");
+        this.spawnDoubleJumpPlatform();
+      }
+    }
+
+    var djPlat = this.doubleJumpPlatform;
+    if (djPlat && djPlat.scene && !djPlat.getData("used")) {
+      var overlap = this.physics.overlap(this.player, djPlat);
+      var playerBottom = this.player.y + DRAGON_H / 2;
+      var platTop = djPlat.y - DOUBLE_JUMP_PLAT_H / 2;
+      var onPlat = overlap && playerBottom >= platTop - 2 && playerBottom <= platTop + 8;
+      if (onPlat) {
+        this.wasOnDoubleJumpPlat = true;
+      } else {
+        if (this.wasOnDoubleJumpPlat) {
+          djPlat.setData("used", true);
+          djPlat.body.checkCollision.none = true;
+        }
+        this.wasOnDoubleJumpPlat = false;
+      }
+    } else {
+      this.wasOnDoubleJumpPlat = false;
+    }
+
+    // Slam down: hold Down in air to drop fast (Tetris-style), not instant
+    if (!onGround && keys.down) {
+      var vy = this.player.body.velocity.y;
+      if (vy < SLAM_DOWN_VY) this.player.body.setVelocityY(SLAM_DOWN_VY);
+    }
+
+    // Don't apply buoyancy inside a vent column — it clamps fall speed and adds upward bias every frame,
+    // which cancels vent pull before the vent block runs and makes holes impossible to enter.
+    var skipOceanBuoyForVent = false;
+    if (this.biomeId === "ocean" && this.vents && this.vents.length) {
+      for (var vbu = 0; vbu < this.vents.length; vbu++) {
+        var vb = this.vents[vbu];
+        var dxvb = this.player.x - vb.x;
+        var hR = vb.radius * 1.05;
+        if (Math.abs(dxvb) <= hR && this.player.y <= vb.yBottom + 220) {
+          skipOceanBuoyForVent = true;
+          break;
+        }
+      }
+    }
+
+    // Ocean buoyancy: when underwater and not slamming down, give a slow-fall + slight upward bias.
+    if (this.biomeId === "ocean" && !onGround && this.isUnderwater && !keys.down && !skipOceanBuoyForVent) {
+      var vyWater = this.player.body.velocity.y;
+      // Clamp fall speed so you drift down slowly.
+      var maxFall = OCEAN_BUOYANCY_MAX_FALL;
+      if (vyWater > maxFall) vyWater = maxFall;
+      // Gentle upward bias so you float a bit.
+      vyWater -= OCEAN_BUOYANCY_UP_BIAS * dt;
+      this.player.body.setVelocityY(vyWater);
+    }
+
+    if (this.biomeId === "ocean" && this.isUnderwater) {
+      if (this.player.oceanBoostCooldownLeft > 0) this.player.oceanBoostCooldownLeft -= dt;
+      if (keys.boost && this.player.oceanBoostCooldownLeft <= 0) {
+        this.player.oceanBoostCooldownLeft = OCEAN_SWIM_BOOST_COOLDOWN_SEC;
+        this.player.oceanBoostFramesLeft = OCEAN_SWIM_BOOST_DURATION_SEC;
+        this.playSfx(this.boostSound, "boost");
+      }
+      // Swim burst velocity applied after bubble-shaft vent (see ocean branch) so F still escapes currents.
+    } else {
+      if (keys.boost && !onGround && this.player.boostAvailable && this.player.timeInAir >= BOOST_AIR_DELAY_SEC) {
+        if (this.biomeId === "ocean" && !this.isUnderwater) {
+          /* no boost climbing in sky */
+        } else {
+          this.player.boostAvailable = false;
+          this.player.boostFramesLeft = BOOST_DURATION_SEC;
+          this.playSfx(this.boostSound, "boost");
+        }
+      }
+      if (this.player.boostFramesLeft > 0) {
+        this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * BOOST_POWER_H * dt);
+        this.player.boostFramesLeft -= dt;
+      }
+    }
+
+    if (this.biomeId !== "ocean" && keys.breath && !window.__dragonBreathKeyConsumed && this.fireBreathsLeft > 0 && this.breathActiveTime <= 0) {
+      window.__dragonBreathKeyConsumed = true;
+      this.breathActiveTime = 10 / REFERENCE_FPS;
+      this.playSfx(this.breathSound, "breath");
+    }
+
+    // Fire breath overlap vs slimes/crawlers
+    if (this.biomeId !== "ocean" && this.breathActiveTime > 0) {
+      var breathX = this.player.x + (this.player.facing > 0 ? 1 : -1) * (DRAGON_W / 2 + DRAGON_MOUTH_OVERHANG + BREATH_LEN / 2);
+      var breathW = BREATH_LEN;
+      // Raise the flame so it comes out near the dragon's head instead of the feet.
+      var breathY = this.player.y - DRAGON_H * 0.3;
+      var breathH = DRAGON_H - 8;
+      // Visual flame
+      this.breathSprite.setVisible(true);
+      this.breathSprite.width = breathW;
+      this.breathSprite.height = breathH;
+      this.breathSprite.x = breathX;
+      this.breathSprite.y = breathY + breathH / 2;
+      for (var si = 0; si < this.slimes.length; si++) {
+        var s = this.slimes[si];
+        if (s.getData("dead")) continue;
+        if (breathX - breathW / 2 < s.x + 11 && breathX + breathW / 2 > s.x - 11 &&
+            breathY < s.y + 9 && breathY + breathH > s.y - 9) {
+          this.killSlime(s);
+        }
+      }
+      for (var cj = 0; cj < this.crawlers.length; cj++) {
+        var c = this.crawlers[cj];
+        if (c.getData("dead")) continue;
+        if (breathX - breathW / 2 < c.x + CRAWLER_W / 2 && breathX + breathW / 2 > c.x - CRAWLER_W / 2 &&
+            breathY < c.y + CRAWLER_H / 2 && breathY + breathH > c.y - CRAWLER_H / 2) {
+          this.killCrawler(c);
+        }
+      }
+      // Bats can also be burned by flame
+      for (var bb = 0; bb < this.bats.length; bb++) {
+        var bat = this.bats[bb];
+        if (!bat.visible) continue;
+        if (breathX - breathW / 2 < bat.x + BAT_W / 2 && breathX + breathW / 2 > bat.x - BAT_W / 2 &&
+            breathY < bat.y + BAT_H / 2 && breathY + breathH > bat.y - BAT_H / 2) {
+          this.killBat(bat);
+        }
+      }
+      // Desert: scorpions and buzzards can be burned by flame
+      if (this.biomeId === "desert") {
+        for (var sci = 0; sci < this.scorpions.length; sci++) {
+          var scorp = this.scorpions[sci];
+          if (scorp.getData("dead")) continue;
+          if (breathX - breathW / 2 < scorp.x + SCORPION_W / 2 && breathX + breathW / 2 > scorp.x - SCORPION_W / 2 &&
+              breathY < scorp.y + SCORPION_H / 2 && breathY + breathH > scorp.y - SCORPION_H / 2) {
+            this.killScorpion(scorp);
+          }
+        }
+        for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+          var buzz = this.buzzards[bzi];
+          if (buzz.getData("dead")) continue;
+          if (breathX - breathW / 2 < buzz.x + BUZZARD_W / 2 && breathX + breathW / 2 > buzz.x - BUZZARD_W / 2 &&
+              breathY < buzz.y + BUZZARD_H / 2 && breathY + breathH > buzz.y - BUZZARD_H / 2) {
+            this.killBuzzard(buzz);
+          }
+        }
+        for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+          var ch = this.cactusHitboxes[cai];
+          if (ch.getData("burned")) continue;
+          if (breathX - breathW / 2 < ch.x + CACTUS_W / 2 && breathX + breathW / 2 > ch.x - CACTUS_W / 2 &&
+              breathY < ch.y + CACTUS_H / 2 && breathY + breathH > ch.y - CACTUS_H / 2) {
+            this.burnCactus(ch);
+          }
+        }
+      }
+      this.breathActiveTime -= dt;
+    } else {
+      this.breathSprite.setVisible(false);
+    }
+
+    // Slimes update (default biome only)
+    if (this.biomeId === "default") {
+    for (var si = 0; si < this.slimes.length; si++) {
+      var slime = this.slimes[si];
+      if (slime.getData("dead")) continue;
+      var def = this.slimeDefs[si];
+      var plat = this.platformsData[def.platformIndex];
+      if (!plat) continue;
+      var baseX = slime.getData("baseX");
+      var baseY = slime.getData("baseY");
+      var state = slime.getData("state");
+      if (state === "waiting") {
+        slime.x = baseX;
+        slime.y = baseY;
+        var timer = slime.getData("timer") - dt;
+        slime.setData("timer", timer);
+        if (timer <= 0) {
+          slime.setData("state", "jumping");
+          slime.setData("vy", -SLIME_JUMP_STRENGTH * creatureSpeedMult);
+          var pv = this.getProximityVolume(slime.x, slime.y);
+          if (pv > 0.06) this.playSfx(this.slimeSound, "slimeJump", { volume: 0.5 * pv });
+        }
+      } else {
+        slime.x = baseX;
+        var vy = slime.getData("vy") + gravity * dt;
+        slime.setData("vy", vy);
+        slime.y += vy * dt;
+        if (slime.y >= baseY) {
+          slime.y = baseY;
+          slime.setData("vy", 0);
+          slime.setData("state", "waiting");
+          slime.setData("timer", (60 + Math.random() * 120) / REFERENCE_FPS);
+        }
+      }
+    }
+    // Keep slime eyes attached
+    for (var se = 0; se < this.slimeEyes.length; se++) {
+      var seInfo = this.slimeEyes[se];
+      var sb = seInfo.body;
+      if (sb.getData("dead")) {
+        seInfo.eye1.setVisible(false);
+        seInfo.eye2.setVisible(false);
+        continue;
+      }
+      seInfo.eye1.x = sb.x - 4;
+      seInfo.eye1.y = sb.y - 3;
+      seInfo.eye2.x = sb.x + 4;
+      seInfo.eye2.y = sb.y - 3;
+    }
+
+    // Bats update (wander erratically, gently attracted to player)
+    var xMin = 50 + BAT_W / 2, xMax = LEVEL_LENGTH - 50 - BAT_W / 2;
+    var yMin = 80 + BAT_H / 2, yMax = this.WORLD_H - 80 - BAT_H / 2;
+    for (var bi = 0; bi < this.bats.length; bi++) {
+      var bat = this.bats[bi];
+      var rng = bat.getData("rng");
+      var vx = bat.getData("vx") || 0;
+      var vy = bat.getData("vy") || 0;
+      // Random wander
+      vx += (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
+      vy += (rng() - 0.5) * BAT_WANDER_STRENGTH * 2 * dt;
+      // Gentle attraction to player when nearby
+      var dx = this.player.x - bat.x;
+      var dy = this.player.y - bat.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 220 && dist > 1) {
+        var attract = (220 - dist) / 220; // stronger when closer
+        vx += (dx / dist) * BAT_WANDER_STRENGTH * attract * dt;
+        vy += (dy / dist) * BAT_WANDER_STRENGTH * attract * dt;
+      }
+      var speed = Math.sqrt(vx * vx + vy * vy);
+      var batMax = BAT_MAX_SPEED * creatureSpeedMult;
+      if (speed > batMax) {
+        vx = (vx / speed) * batMax;
+        vy = (vy / speed) * batMax;
+      }
+      bat.setData("vx", vx);
+      bat.setData("vy", vy);
+      bat.x = Phaser.Math.Clamp(bat.x + vx * dt, xMin, xMax);
+      bat.y = Phaser.Math.Clamp(bat.y + vy * dt, yMin, yMax);
+      bat.body.updateFromGameObject();
+      // Occasional bat chitter (rate scales with dt); volume by proximity
+      if (rng() < 0.4 * dt) {
+        var pv = this.getProximityVolume(bat.x, bat.y);
+        if (pv > 0.06) this.playSfx(this.batSound, "batChitter", { volume: 0.4 * pv });
+      }
+    }
+    // Keep bat parts attached
+    for (var bp = 0; bp < this.batParts.length; bp++) {
+      var bInfo = this.batParts[bp];
+      var bb = bInfo.body;
+      bInfo.leftWing.x = bb.x - 10;
+      bInfo.leftWing.y = bb.y;
+      bInfo.rightWing.x = bb.x + 10;
+      bInfo.rightWing.y = bb.y;
+      bInfo.eyeL.x = bb.x - 3;
+      bInfo.eyeL.y = bb.y - 3;
+      bInfo.eyeR.x = bb.x + 3;
+      bInfo.eyeR.y = bb.y - 3;
+    }
+
+    // Crawlers update
+    for (var ck = 0; ck < this.crawlers.length; ck++) {
+      var crawler = this.crawlers[ck];
+      if (crawler.getData("dead")) continue;
+      var cplat = this.platformsData[crawler.getData("platformIndex")];
+      if (!cplat) continue;
+      var oldOffset = crawler.getData("offset");
+      var wasTop = oldOffset >= 0 && oldOffset < 0.25;
+      var wasBottom = oldOffset >= 0.5 && oldOffset < 0.75;
+      var offset = oldOffset + CRAWLER_PERIMETER_SPEED * creatureSpeedMult * dt;
+      if (offset >= 1) offset -= 1;
+      crawler.setData("offset", offset);
+      var pos = crawlerPerimeterPosition(cplat, offset);
+      crawler.x = pos.cx;
+      crawler.y = pos.cy;
+      var isTop = offset >= 0 && offset < 0.25;
+      var isBottom = offset >= 0.5 && offset < 0.75;
+      if ((!wasTop && isTop) || (!wasBottom && isBottom)) {
+        var pv = this.getProximityVolume(crawler.x, crawler.y);
+        if (pv > 0.06) this.playSfx(this.crawlerSound, "crawlerSlide", { volume: 0.7 * pv });
+      }
+    }
+    // Keep crawler eyes attached
+    for (var ce = 0; ce < this.crawlerEyes.length; ce++) {
+      var cInfo = this.crawlerEyes[ce];
+      var cb = cInfo.body;
+      if (cb.getData("dead")) {
+        cInfo.eye1.setVisible(false);
+        cInfo.eye2.setVisible(false);
+        continue;
+      }
+      cInfo.eye1.x = cb.x - 3;
+      cInfo.eye1.y = cb.y - 3;
+      cInfo.eye2.x = cb.x + 3;
+      cInfo.eye2.y = cb.y - 3;
+    }
+    } else if (this.biomeId === "desert") {
+      // Scorpions: patrol back and forth; play step sound at interval (proximity-based)
+      for (var sci = 0; sci < this.scorpions.length; sci++) {
+        var scorp = this.scorpions[sci];
+        if (scorp.getData("dead")) continue;
+        var left = scorp.getData("left");
+        var right = scorp.getData("right");
+        var dir = scorp.getData("direction");
+        scorp.x += dir * SCORPION_SPEED * creatureSpeedMult * dt;
+        if (scorp.x <= left) { scorp.x = left; scorp.setData("direction", 1); }
+        if (scorp.x >= right) { scorp.x = right; scorp.setData("direction", -1); }
+        scorp.body.updateFromGameObject();
+        var stepTimer = (scorp.getData("stepTimer") || 0) + dt;
+        if (stepTimer >= SCORPION_STEP_INTERVAL) {
+          stepTimer = 0;
+          var pv = this.getProximityVolume(scorp.x, scorp.y);
+          if (pv > 0.06) this.playSfx(this.scorpionSound, "scorpion", { volume: 0.4 * pv });
+        }
+        scorp.setData("stepTimer", stepTimer);
+      }
+      // Buzzards: wander like bats
+      var buzzXMin = 50 + BUZZARD_W / 2, buzzXMax = LEVEL_LENGTH - 50 - BUZZARD_W / 2;
+      var buzzYMin = 80 + BUZZARD_H / 2, buzzYMax = this.WORLD_H - 80 - BUZZARD_H / 2;
+      for (var bzi = 0; bzi < this.buzzards.length; bzi++) {
+        var buzz = this.buzzards[bzi];
+        if (buzz.getData("dead")) continue;
+        var rng = buzz.getData("rng");
+        var vx = buzz.getData("vx") || 0;
+        var vy = buzz.getData("vy") || 0;
+        vx += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
+        vy += (rng() - 0.5) * BUZZARD_WANDER_STRENGTH * 2 * dt;
+        var speed = Math.sqrt(vx * vx + vy * vy);
+        var buzzMax = BUZZARD_MAX_SPEED * creatureSpeedMult;
+        if (speed > buzzMax) {
+          vx = (vx / speed) * buzzMax;
+          vy = (vy / speed) * buzzMax;
+        }
+        buzz.setData("vx", vx);
+        buzz.setData("vy", vy);
+        buzz.x = Phaser.Math.Clamp(buzz.x + vx * dt, buzzXMin, buzzXMax);
+        buzz.y = Phaser.Math.Clamp(buzz.y + vy * dt, buzzYMin, buzzYMax);
+        buzz.body.updateFromGameObject();
+        if (rng() < 0.4 * dt) {
+          var pv = this.getProximityVolume(buzz.x, buzz.y);
+          if (pv > 0.03) this.playSfx(this.buzzardSound, "buzzard", { volume: 0.65 * pv });
+        }
+      }
+      for (var bpi = 0; bpi < this.buzzardParts.length; bpi++) {
+        var bzInfo = this.buzzardParts[bpi];
+        if (bzInfo.body.getData("dead")) continue;
+        bzInfo.wingL.x = bzInfo.body.x - 8;
+        bzInfo.wingL.y = bzInfo.body.y + 2;
+        bzInfo.wingR.x = bzInfo.body.x + 8;
+        bzInfo.wingR.y = bzInfo.body.y + 2;
+      }
+      // Needle-shooter cacti (variety 2): when player close, shake then fire 4 needles
+      for (var cai = 0; cai < this.cactusHitboxes.length; cai++) {
+        var ch = this.cactusHitboxes[cai];
+        if (ch.getData("burned") || ch.getData("variety") !== 2 || ch.getData("fired")) continue;
+        var dx = this.player.x - ch.x;
+        var dy = this.player.y - ch.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > CACTUS_NEEDLE_TRIGGER_DIST) continue;
+        var shakeTimer = ch.getData("shakeTimer");
+        if (shakeTimer <= 0) ch.setData("shakeTimer", CACTUS_SHAKE_DURATION);
+        shakeTimer = ch.getData("shakeTimer") - dt;
+        ch.setData("shakeTimer", shakeTimer);
+        if (shakeTimer <= 0) {
+          ch.setData("fired", true);
+          var numNeedles = CACTUS_NEEDLE_COUNT;
+          for (var ni = 0; ni < numNeedles; ni++) {
+            var angle = (ni / numNeedles) * Math.PI * 2 + (cai * 0.5);
+            var vx = Math.cos(angle) * NEEDLE_SPEED;
+            var vy = Math.sin(angle) * NEEDLE_SPEED;
+            var needle = this.add.rectangle(ch.x, ch.y, NEEDLE_R * 2, NEEDLE_R * 2, 0x1a3a17);
+            this.physics.add.existing(needle, false);
+            needle.body.setVelocity(vx, vy);
+            needle.body.setAllowGravity(false);
+            needle.setData("birthTime", time / 1000);
+            this.needleGroup.add(needle);
+          }
+        }
+      }
+      // Needles: remove when off screen or too old
+      var needleChildren = this.needleGroup.getChildren();
+      for (var ni = needleChildren.length - 1; ni >= 0; ni--) {
+        var n = needleChildren[ni];
+        if (!n.active) continue;
+        var age = (time / 1000) - (n.getData("birthTime") || 0);
+        if (age > 3 || n.x < -50 || n.x > LEVEL_LENGTH + 50 || n.y < this.worldMinY - 50 || n.y > this.worldMaxY + 50) {
+          n.destroy();
+        }
+      }
+    } else if (this.biomeId === "ocean") {
+      // Baracudas: aggro radius + de-aggro; two-part visuals + eyes (see biome-ocean.md)
+      var barXMin = 50 + BARACUDA_W / 2, barXMax = LEVEL_LENGTH - 50 - BARACUDA_W / 2;
+      var barYMin = (this.waterSurfaceY != null ? this.waterSurfaceY + 40 : 80) + BARACUDA_H / 2;
+      var barYMax = this.WORLD_H - 80 - BARACUDA_H / 2;
+      var baracudaDiffT = (this.currentDifficulty != null && typeof this.currentDifficulty === "number")
+        ? (Math.max(1, Math.min(30, this.currentDifficulty)) - 1) / 29
+        : 0;
+      var baracudaSpeedScale = BARACUDA_SPEED_SCALE_AT_L1
+        + (BARACUDA_SPEED_SCALE_AT_L30 - BARACUDA_SPEED_SCALE_AT_L1) * baracudaDiffT;
+      var baracudaBaseSpeed = BARACUDA_BASE_SPEED * baracudaSpeedScale;
+      var baracudaLungeSpeed = BARACUDA_LUNGE_SPEED * baracudaSpeedScale;
+      for (var bai = 0; bai < this.baracudas.length; bai++) {
+        var bar = this.baracudas[bai];
+        if (bar.getData("dead")) continue;
+        var rng = bar.getData("rng");
+        var vx = bar.getData("vx") || 0;
+        var vy = bar.getData("vy") || 0;
+        var state = bar.getData("state") || "patrol";
+        var linger = bar.getData("lingerTime") || 0;
+        var dxp = this.player.x - bar.x;
+        var dyp = this.player.y - bar.y;
+        var distP = Math.sqrt(dxp * dxp + dyp * dyp);
+        var angToP = distP > 1 ? Math.atan2(dyp, dxp) : 0;
+
+        if (state === "patrol") {
+          vx += (rng() - 0.5) * BARACUDA_BASE_SPEED * 0.6 * dt;
+          vy += (rng() - 0.5) * BARACUDA_BASE_SPEED * 0.6 * dt;
+          if (distP < BARACUDA_AGGRO_RADIUS) {
+            linger += dt;
+          } else {
+            linger = Math.max(0, linger - dt * 0.85);
+          }
+          if (linger >= BARACUDA_LINGER_TO_LUNGE && distP < BARACUDA_AGGRO_RADIUS) {
+            var speed0 = baracudaLungeSpeed;
+            if (distP > 1) {
+              vx = (dxp / distP) * speed0;
+              vy = (dyp / distP) * speed0;
+            }
+            state = "lunge";
+            linger = 0;
+          }
+        } else if (state === "lunge") {
+          if (distP > BARACUDA_DEAGGRO_RADIUS) {
+            state = "patrol";
+            linger = 0;
+            vx = (rng() - 0.5) * BARACUDA_BASE_SPEED * 0.35;
+            vy = (rng() - 0.5) * BARACUDA_BASE_SPEED * 0.35;
+          } else {
+            var lungeSpeed2 = baracudaLungeSpeed;
+            if (distP > 1) {
+              vx = (dxp / distP) * lungeSpeed2;
+              vy = (dyp / distP) * lungeSpeed2;
+            }
+            linger += dt;
+            if (linger >= 1.25) {
+              state = "patrol";
+              linger = 0;
+            }
+          }
+        }
+
+        var speedNow = Math.sqrt(vx * vx + vy * vy);
+        var maxSpeed = (state === "lunge" ? baracudaLungeSpeed : baracudaBaseSpeed);
+        if (state !== "lunge" && speedNow > maxSpeed && speedNow > 0) {
+          vx = (vx / speedNow) * maxSpeed;
+          vy = (vy / speedNow) * maxSpeed;
+        }
+
+        bar.setData("vx", vx);
+        bar.setData("vy", vy);
+        bar.setData("state", state);
+        bar.setData("lingerTime", linger);
+        bar.x = Phaser.Math.Clamp(bar.x + vx * dt, barXMin, barXMax);
+        bar.y = Phaser.Math.Clamp(bar.y + vy * dt, barYMin, barYMax);
+        bar.body.updateFromGameObject();
+
+        var baseAng = speedNow > 12 ? Math.atan2(vy, vx) : angToP;
+        var dAng = angToP - baseAng;
+        while (dAng > Math.PI) dAng -= Math.PI * 2;
+        while (dAng < -Math.PI) dAng += Math.PI * 2;
+        var swivel = (distP < BARACUDA_DEAGGRO_RADIUS + 50 && distP > 1) ? Phaser.Math.Clamp(dAng, -0.55, 0.55) * 0.62 : 0;
+        var headAng = baseAng + swivel;
+        var tailPart = bar.getData("tailPart");
+        var headPart = bar.getData("headPart");
+        var eyeL = bar.getData("eyeL");
+        var eyeR = bar.getData("eyeR");
+        var pupL = bar.getData("pupL");
+        var pupR = bar.getData("pupR");
+        if (tailPart && headPart) {
+          tailPart.setPosition(bar.x - Math.cos(baseAng) * 8, bar.y - Math.sin(baseAng) * 8);
+          tailPart.setRotation(baseAng);
+          headPart.setPosition(bar.x + Math.cos(headAng) * 14, bar.y + Math.sin(headAng) * 14);
+          headPart.setRotation(headAng);
+          var perp = headAng + Math.PI / 2;
+          var noseX = bar.x + Math.cos(headAng) * 22;
+          var noseY = bar.y + Math.sin(headAng) * 22;
+          var lookNx = distP > 1 ? dxp / distP : Math.cos(headAng);
+          var lookNy = distP > 1 ? dyp / distP : Math.sin(headAng);
+          if (eyeL && eyeR && pupL && pupR) {
+            eyeL.setPosition(noseX + Math.cos(perp) * 3.2, noseY + Math.sin(perp) * 3.2);
+            eyeR.setPosition(noseX - Math.cos(perp) * 3.2, noseY - Math.sin(perp) * 3.2);
+            pupL.setPosition(noseX + Math.cos(perp) * 3.2 + lookNx * 0.85, noseY + Math.sin(perp) * 3.2 + lookNy * 0.85);
+            pupR.setPosition(noseX - Math.cos(perp) * 3.2 + lookNx * 0.85, noseY - Math.sin(perp) * 3.2 + lookNy * 0.85);
+          }
+        }
+        bar.rotation = baseAng;
+      }
+
+      var tTime = time / 1000;
+      for (var ji = 0; ji < this.jellyfish.length; ji++) {
+        var jelly = this.jellyfish[ji];
+        var baseX = jelly.getData("baseX");
+        var baseY = jelly.getData("baseY");
+        var vertical = jelly.getData("vertical");
+        var amp = jelly.getData("amplitude") || 50;
+        var period = jelly.getData("periodSec") || 3.5;
+        var phase = (tTime / period) * Math.PI * 2;
+        if (vertical) {
+          jelly.x = baseX;
+          jelly.y = baseY + Math.sin(phase) * amp;
+        } else {
+          jelly.x = baseX + Math.sin(phase) * amp;
+          jelly.y = baseY;
+        }
+        jelly.body.updateFromGameObject();
+        var bell = jelly.getData("bell");
+        if (bell) {
+          bell.x = jelly.x;
+          bell.y = jelly.y - 3;
+        }
+        var jt = jelly.getData("tentGfx");
+        if (jt) {
+          jt.clear();
+          jt.fillStyle(0xec4899, 0.9);
+          for (var ti = 0; ti < 5; ti++) {
+            jt.fillEllipse(jelly.x - 8 + ti * 4, jelly.y + 12 + Math.sin(tTime * 4 + ti * 0.7) * 6, 4, 10 + ti * 1.5);
+          }
+        }
+      }
+
+      // Vent suction: black-hole style pull toward floor hole + down-current; hole mouth = shaft width (see biome-ocean.md).
+      // Pull ramps up as you descend toward the hole (weak near the top of the column).
+      // Kill only after shrink-into-hole tween (startVentSinkDeath), not on first overlap.
+      if (this.vents && this.vents.length && !this.ventSinkActive) {
+        for (var vi = 0; vi < this.vents.length; vi++) {
+          var vent = this.vents[vi];
+          var dxv = this.player.x - vent.x;
+          var holeR = vent.holeRadius != null ? vent.holeRadius : OCEAN_VENT_SHAFT_HALF_WIDTH;
+          var horizontalRange = vent.radius * 1.05;
+          if (Math.abs(dxv) <= horizontalRange && this.player.y <= vent.yBottom + 220) {
+            var centerFactor = 1 - Math.min(1, Math.abs(dxv) / horizontalRange);
+            var holeCx = vent.x;
+            var holeCy = vent.holeCy != null ? vent.holeCy : vent.yTop + 8;
+            // y increases downward: far above hole (small player.y) → weak pull; near mouth → full pull.
+            var yAboveHole = vent.yTop - this.player.y;
+            var depthLinear = 1 - Phaser.Math.Clamp(yAboveHole / OCEAN_VENT_DEPTH_BLEND_PX, 0, 1);
+            var depthT = depthLinear * depthLinear;
+            var verticalFactor = 0.06 + 0.94 * depthT;
+            var dxh = this.player.x - holeCx;
+            var dyh = this.player.y - holeCy;
+            var dist = Math.sqrt(dxh * dxh + dyh * dyh) || 1;
+            var distSafe = Math.max(dist, 28);
+            var radialStr = (620 + 520 * centerFactor) * OCEAN_VENT_PULL_MULT * dt / (6 + distSafe * 0.055);
+            radialStr *= verticalFactor;
+            radialStr = Math.min(radialStr, 2600 * dt * verticalFactor);
+            var nx = -dxh / dist;
+            var ny = -dyh / dist;
+            var vxP = this.player.body.velocity.x + nx * radialStr;
+            var vyP = this.player.body.velocity.y + ny * radialStr;
+            vyP += (400 + 340 * centerFactor) * OCEAN_VENT_PULL_MULT * dt * verticalFactor;
+            this.player.body.setVelocity(vxP, vyP);
+            if (this.bubbleShaftSound) {
+              var pv = this.getProximityVolume(vent.x, vent.yTop);
+              if (pv > 0.05) this.playSfx(this.bubbleShaftSound, "ocean_bubbleShaft", { volume: 0.5 * pv });
+            }
+            // yTop..yBottom is only platform thickness (~16px); use body overlap with hole mouth so sink can trigger.
+            var pTop = this.player.y - DRAGON_H / 2;
+            var pBot = this.player.y + DRAGON_H / 2;
+            var inHoleY = pBot >= vent.yTop - 14 && pTop <= vent.yBottom + 28;
+            if (Math.abs(dxv) <= holeR * 0.96 && inHoleY) {
+              this.startVentSinkDeath(vent);
+              break;
+            }
+          }
+        }
+      }
+
+      // Underwater swim boost (F): apply after vents/currents so forward burst isn’t wiped by setVelocity in shaft.
+      if (this.player.oceanBoostFramesLeft > 0) {
+        if (this.isUnderwater) {
+          this.player.body.setVelocityX(this.player.body.velocity.x + this.player.facing * OCEAN_SWIM_BOOST_POWER_H * dt);
+        }
+        this.player.oceanBoostFramesLeft -= dt;
+      }
+
+      // Seagulls: patrol in sky; swoop when player surfaces (accelerate toward player — see biome-ocean.md)
+      if (this.seagulls && this.seagulls.length) {
+        var surfYSg = this.waterSurfaceY != null ? this.waterSurfaceY : OCEAN_SURFACE_Y;
+        var playerSurfaced = !this.isUnderwater && this.player.y < surfYSg + 35;
+        var sgDiffT = (this.currentDifficulty != null && typeof this.currentDifficulty === "number")
+          ? (Math.max(1, Math.min(30, this.currentDifficulty)) - 1) / 29
+          : 0;
+        var sgSwoopAccel = SEAGULL_SWOOP_ACCEL_L1 + (SEAGULL_SWOOP_ACCEL_L30 - SEAGULL_SWOOP_ACCEL_L1) * sgDiffT;
+        var sgSwoopMax = SEAGULL_SWOOP_MAX_SPEED_L1 + (SEAGULL_SWOOP_MAX_SPEED_L30 - SEAGULL_SWOOP_MAX_SPEED_L1) * sgDiffT;
+        for (var sgi = 0; sgi < this.seagulls.length; sgi++) {
+          var gull = this.seagulls[sgi];
+          var sgdef = gull.getData("def") || {};
+          var gState = gull.getData("state") || "patrol";
+          if (playerSurfaced) {
+            gState = "swoop";
+          } else {
+            gState = "patrol";
+            gull.setData("baseX", gull.x);
+            gull.setData("swoopEngaged", false);
+            gull.setData("swoopSpeed", 0);
+          }
+          if (gState === "swoop") {
+            if (!gull.getData("swoopEngaged")) {
+              gull.setData("swoopEngaged", true);
+              gull.setData("swoopSpeed", 0);
+            }
+            var sm = 1;
+            if (typeof sgdef.swoopMult === "number") sm = sgdef.swoopMult;
+            else if (typeof sgdef.speed === "number") sm = Phaser.Math.Clamp(sgdef.speed / 55, 0.55, 1.2);
+            var gdx = this.player.x - gull.x;
+            var gdy = this.player.y - gull.y;
+            var gd = Math.sqrt(gdx * gdx + gdy * gdy) || 1;
+            var cap = sgSwoopMax * sm;
+            var spd = gull.getData("swoopSpeed") || 0;
+            spd = Math.min(cap, spd + sgSwoopAccel * sm * dt);
+            gull.setData("swoopSpeed", spd);
+            gull.x += (gdx / gd) * spd * dt;
+            gull.y += (gdy / gd) * spd * dt;
+          } else {
+            var ph = (gull.getData("phase") || 0) + dt;
+            gull.setData("phase", ph);
+            var pw = sgdef.patrolW || 90;
+            gull.x = (gull.getData("baseX") || gull.x) + Math.sin(ph * SEAGULL_PATROL_SIN_FREQ) * pw * SEAGULL_PATROL_AMP_SCALE;
+          }
+          gull.setData("state", gState);
+          gull.body.updateFromGameObject();
+        }
+      }
+
+      // Bubble shimmer particles rising through shafts
+      if (this.bubbleParticles && this.bubbleParticles.length) {
+        for (var bp = 0; bp < this.bubbleParticles.length; bp++) {
+          var bubble = this.bubbleParticles[bp];
+          bubble.y -= bubble.speed * dt;
+          if (bubble.y <= bubble.topY) {
+            bubble.y = bubble.bottomY - 4 - Math.random() * 20;
+          }
+          var alpha = 0.4 + 0.4 * Math.sin((time / 200) + bp);
+          bubble.gfx.setPosition(bubble.x, bubble.y);
+          bubble.gfx.setAlpha(alpha);
+        }
+      }
+    }
+
+    // Animate item VFX (orb pulse, flame wobble), hide when collected
+    if (this.itemVfx && this.itemVfx.length) {
+      var t = time / 1000;
+      for (var iv = 0; iv < this.itemVfx.length; iv++) {
+        var v = this.itemVfx[iv];
+        var zone = v.zone;
+        var collected = zone.getData("collected");
+        if (v.type === "lavaBounce") {
+          if (collected) {
+            v.sprite.setVisible(false);
+            continue;
+          }
+          var pulse = 0.9 + 0.15 * Math.sin(t * 3);
+          v.sprite.setVisible(true);
+          v.sprite.setScale(pulse);
+        } else if (v.type === "fireTotem") {
+          var base = v.base, mid = v.mid, flame = v.flame;
+          if (collected) {
+            base.setVisible(false);
+            mid.setVisible(false);
+            flame.setVisible(false);
+            continue;
+          }
+          base.setVisible(true);
+          mid.setVisible(true);
+          flame.setVisible(true);
+          var wobble = 0.9 + 0.12 * Math.sin(t * 4);
+          flame.setScale(1, wobble);
+        } else if (v.type === "chomp") {
+          if (collected) {
+            v.tooth1.setVisible(false);
+            v.tooth2.setVisible(false);
+            continue;
+          }
+          v.tooth1.setVisible(true);
+          v.tooth2.setVisible(true);
+        } else if (v.type === "airCanister") {
+          if (collected) {
+            if (v.tank) v.tank.setVisible(false);
+            if (v.cap) v.cap.setVisible(false);
+            continue;
+          }
+          var bob = 1 + 0.06 * Math.sin(t * 5);
+          if (v.tank) {
+            v.tank.setVisible(true);
+            v.tank.setScale(1, bob);
+          }
+          if (v.cap) v.cap.setVisible(true);
+        }
+      }
+    }
+
+    // Drop platforms
+    for (var pi = 0; pi < this.platformsData.length; pi++) {
+      var p = this.platformsData[pi];
+      if (!p || !p.drop) continue;
+      if (p.dropTimer == null) {
+        p.dropTimer = p.drop.delay / REFERENCE_FPS;
+        p.dropping = false;
+        p.dropActive = false;
+      }
+      if (this.standingPlatformIndex === pi && !p.dropping) {
+        var platCx = p.x + p.w / 2;
+        var platCy = p.y + p.h / 2;
+        var pv = this.getProximityVolume(platCx, platCy);
+        if (!p.dropActive) {
+          p.dropActive = true;
+          if (pv > 0.06) this.playSfx(this.platformStepSound, "platformStep", { volume: 0.6 * pv });
+        }
+        if (p.dropTimer > 0) {
+          p.dropTimer -= dt;
+          if (p.dropTimer <= 0) {
+            p.dropping = true;
+            if (pv > 0.06) this.playSfx(this.platformFallSound, "platformFall", { volume: 0.6 * pv });
+          }
+        }
+      }
+      if (p.dropping) {
+        p.y += p.drop.speed * REFERENCE_FPS * dt;
+        var sprite = this.platformSprites[pi];
+        if (sprite) {
+          sprite.y = p.y + p.h / 2;
+          if (sprite.body) sprite.body.updateFromGameObject();
+        }
+      }
+    }
+
+    // standingPlatformIndex already set above (lenient check for drop-platform logic)
+
+    if (onGround) {
+      this.player.onGround = true;
+      if (physicsGround && this.standingPlatformIndex >= 0) {
+        this.player.jumpsLeft = 2;   // next ground jump + one double jump available
+        this.player.boostAvailable = true;
+      }
+    } else {
+      this.player.onGround = false;
+    }
+
+    // Simple motion trail behind the dragon (uses same dragonColor so orb/totem = orange trail)
+    if (!this.trailGraphics) {
+      this.trailGraphics = this.add.graphics().setDepth(this.player.depth - 1);
+      this.trail = [];
+    }
+    var speedMag = Math.sqrt(this.player.body.velocity.x * this.player.body.velocity.x + this.player.body.velocity.y * this.player.body.velocity.y);
+    if (speedMag > 45 || this.player.boostFramesLeft > 0 || (this.player.oceanBoostFramesLeft != null && this.player.oceanBoostFramesLeft > 0)) {
+      this.trail.push({ x: this.player.x, y: this.player.y });
+      if (this.trail.length > 16) this.trail.shift();
+    } else {
+      this.trail.length = 0;
+    }
+    this.trailGraphics.clear();
+    for (var ti = 0; ti < this.trail.length; ti++) {
+      var tInfo = this.trail[ti];
+      var alpha = 0.1 + (ti / Math.max(1, this.trail.length)) * 0.4;
+      this.trailGraphics.fillStyle(dragonColor, alpha);
+      this.trailGraphics.fillRect(tInfo.x - DRAGON_W / 2, tInfo.y - DRAGON_H / 2, DRAGON_W, DRAGON_H);
+    }
+
+    this.updateHUD();
+  };
+
+  // --- UI: populate dropdown, hash, buttons
+  function populateLevelDropdown() {
+    var select = document.getElementById("levelSelect");
+    if (!select) return;
+    var data = loadAllLevels(WORLD_H);
+    select.innerHTML = "";
+    var optNew = document.createElement("option");
+    optNew.value = "new";
+    optNew.textContent = "New Random Level";
+    select.appendChild(optNew);
+    var userId = getScoreUserId();
+    data.levels.forEach(function (lvl) {
+      var opt = document.createElement("option");
+      opt.value = lvl.id;
+      var best = (typeof lvl.bestScore === "number" && isFinite(lvl.bestScore)) ? lvl.bestScore.toFixed(2) + "s" : "--";
+      var bestScorePt = getBestScoreForLevel(lvl.id, userId);
+      var scoreStr = bestScorePt > 0 ? String(bestScorePt) : "--";
+      var bestDots = (typeof lvl.bestDots === "number" && lvl.bestDots > 0) ? lvl.bestDots + "/" + NUM_DOTS : "--";
+      opt.textContent = lvl.name + " (Best: " + best + ", Score: " + scoreStr + ", Dots: " + bestDots + ")";
+      select.appendChild(opt);
+    });
+  }
+
+  function getPlayedLevelsSummary() {
+    var profile = loadProfile();
+    var runs = (profile && Array.isArray(profile.runs)) ? profile.runs : [];
+    var map = Object.create(null);
+    runs.forEach(function (r) {
+      if (!r) return;
+      if (r.seed == null || r.difficulty == null) return;
+      var seed = r.seed | 0;
+      var diff = r.difficulty | 0;
+      if (!seed || seed <= 0) return;
+      if (!diff || diff < 1 || diff > 30) return;
+      var key = seed + "/" + diff;
+      var time = (typeof r.timeSeconds === "number" && isFinite(r.timeSeconds)) ? r.timeSeconds : Infinity;
+      var dots = (typeof r.dotsCollected === "number") ? r.dotsCollected : 0;
+      var dotsTotal = (typeof r.dotsTotal === "number") ? r.dotsTotal : NUM_DOTS;
+      var ts = Date.parse(r.timestamp || "") || 0;
+      var existing = map[key];
+      if (!existing) {
+        map[key] = {
+          key: key,
+          seed: seed,
+          difficulty: diff,
+          bestTime: time,
+          bestDots: dots,
+          dotsTotal: dotsTotal,
+          lastPlayed: ts
+        };
+      } else {
+        if (time < existing.bestTime) existing.bestTime = time;
+        if (dots > existing.bestDots) {
+          existing.bestDots = dots;
+          existing.dotsTotal = dotsTotal;
+        }
+        if (ts > existing.lastPlayed) existing.lastPlayed = ts;
+      }
+    });
+    var list = Object.keys(map).map(function (k) { return map[k]; });
+    list.sort(function (a, b) {
+      return (b.lastPlayed || 0) - (a.lastPlayed || 0);
+    });
+    return list;
+  }
+
+  function populatePlayedDropdown() {
+    var select = document.getElementById("playedSelect");
+    if (!select) return;
+    var summary = getPlayedLevelsSummary();
+    select.innerHTML = "";
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = summary.length ? "Played levels…" : "No played levels yet";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
+    summary.forEach(function (p) {
+      var opt = document.createElement("option");
+      opt.value = p.seed + "/" + p.difficulty;
+      var best = (typeof p.bestTime === "number" && isFinite(p.bestTime) && p.bestTime < Infinity)
+        ? p.bestTime.toFixed(2) + "s"
+        : "--";
+      var dotsText = p.bestDots > 0 ? (p.bestDots + "/" + (p.dotsTotal || NUM_DOTS)) : "--";
+      opt.textContent = p.seed + "/" + p.difficulty + " (Best: " + best + ", Dots: " + dotsText + ")";
+      select.appendChild(opt);
+    });
+  }
+
+  function loadLevelFromHash() {
+    var hash = (location.hash || "").slice(1).trim();
+    if (!hash) return false;
+    var parts = hash.split("/");
+    var hashSeed = parseInt(parts[0], 10);
+    var hashDifficulty = parts.length > 1 ? parseInt(parts[1], 10) : 15;
+    if (isNaN(hashSeed) || hashSeed <= 0) return false;
+    var difficulty = (!isNaN(hashDifficulty) && hashDifficulty >= 1 && hashDifficulty <= 30) ? hashDifficulty : 15;
+    var hashBiome = (parts.length > 2 && (parts[2] === "desert" || parts[2] === "default" || parts[2] === "ocean")) ? parts[2] : getSelectedBiomeId();
+    if (hashBiome && document.getElementById("biomeSelect")) document.getElementById("biomeSelect").value = hashBiome;
+    setSelectedBiomeId(hashBiome);
+    window.__dragonLevelData = buildLevelDataForNewSeed(hashSeed, difficulty, hashBiome);
+    return true;
+  }
+
+  function syncFireBreathControlVisibility() {
+    var ld = window.__dragonLevelData;
+    var hide = ld && ld.biomeId === "ocean";
+    var btn = document.getElementById("btnBreath");
+    if (!btn) return;
+    var wrap = btn.closest ? btn.closest(".btn-wrap") : btn.parentElement;
+    if (wrap) wrap.style.display = hide ? "none" : "";
+    else btn.style.display = hide ? "none" : "";
+  }
+
+  function startOrRestartGame() {
+    syncFireBreathControlVisibility();
+    var sameLevelRestart = !!window.__dragonRestartingSameLevel;
+    window.__dragonRestartingSameLevel = false;
+    if (!sameLevelRestart) {
+      window.__dragonCheatInvincible = false;
+      window.__dragonCheatInfiniteLives = false;
+      window.__dragonCheatsUsedThisRun = false;
+    }
+    if (window.__dragonGame && window.__dragonGame.scene && window.__dragonGame.scene.scenes) {
+      var scene = window.__dragonGame.scene.getScene("Game");
+      if (scene) scene.scene.restart();
+    }
+  }
+
+  // --- Init: detect backend (or localStorage fallback), bind input, create Phaser game
+  function init() {
+    detectBackend().then(function () {
+      bootGame();
+    }).catch(function () {
+      setBackendMode(BACKEND_MODE_LOCAL);
+      bootGame();
+    });
+  }
+
+  function bootGame() {
+    populateLevelDropdown();
+    populatePlayedDropdown();
+    window.__dragonPopulateLevelDropdown = populateLevelDropdown;
+    window.__dragonPopulatePlayedDropdown = populatePlayedDropdown;
+
+    // Biome selector: Cave, Desert, Ocean
+    var biomeSelect = document.getElementById("biomeSelect");
+    if (biomeSelect) {
+      biomeSelect.innerHTML = "";
+      var optDefault = document.createElement("option");
+      optDefault.value = "default";
+      optDefault.textContent = "Cave";
+      biomeSelect.appendChild(optDefault);
+      var optDesert = document.createElement("option");
+      optDesert.value = "desert";
+      optDesert.textContent = "Desert";
+      biomeSelect.appendChild(optDesert);
+      var optOcean = document.createElement("option");
+      optOcean.value = "ocean";
+      optOcean.textContent = "Ocean";
+      biomeSelect.appendChild(optOcean);
+      biomeSelect.value = getSelectedBiomeId();
+      biomeSelect.addEventListener("change", function () {
+        setSelectedBiomeId(biomeSelect.value);
+      });
+    }
+
+    // Difficulty dropdown (random or 1-30), persisted in localStorage
+    var diffSelect = document.getElementById("difficultySelect");
+    if (diffSelect) {
+      diffSelect.innerHTML = "";
+      var optRandom = document.createElement("option");
+      optRandom.value = "random";
+      optRandom.textContent = "Difficulty: random";
+      diffSelect.appendChild(optRandom);
+      for (var d = 1; d <= 30; d++) {
+        var optD = document.createElement("option");
+        optD.value = String(d);
+        optD.textContent = "Difficulty: " + d;
+        diffSelect.appendChild(optD);
+      }
+      var stored = loadDifficultySetting();
+      diffSelect.value = stored;
+      diffSelect.addEventListener("change", function () {
+        saveDifficultySetting(diffSelect.value);
+      });
+    }
+
+    // Mock sign-in: username stored in localStorage profile
+    var userForm = document.getElementById("userForm");
+    var usernameInput = document.getElementById("usernameInput");
+    var saveUserBtn = document.getElementById("saveUserBtn");
+    function renderUserForm(username) {
+      if (!userForm) return;
+      username = username || "";
+      if (username) {
+        userForm.innerHTML =
+          '<span class="user-name-pill">' + username.replace(/</g, "&lt;").replace(/>/g, "&gt;") + '</span> ' +
+          '<button id="logoutBtn" type="button" title="Logout (clear player name)">Logout</button>';
+        var logoutBtn = document.getElementById("logoutBtn");
+        if (logoutBtn) {
+          logoutBtn.addEventListener("click", function () {
+            setProfileUsername("");
+            // Restore input UI
+            userForm.innerHTML =
+              '<input id="usernameInput" type="text" placeholder="Your name" title="Your player name">' +
+              '<button id="saveUserBtn" type="button" title="Save player name">Save</button>';
+            var newInput = document.getElementById("usernameInput");
+            var newSaveBtn = document.getElementById("saveUserBtn");
+            if (newSaveBtn && newInput) {
+              newSaveBtn.addEventListener("click", function () {
+                var name = newInput.value.trim();
+                setProfileUsername(name);
+                renderUserForm(name);
+              });
+            }
+          });
+        }
+      } else {
+        // Ensure input mode if no username
+        userForm.innerHTML =
+          '<input id="usernameInput" type="text" placeholder="Your name" title="Your player name">' +
+          '<button id="saveUserBtn" type="button" title="Save player name">Save</button>';
+        var inputEl = document.getElementById("usernameInput");
+        var saveBtnEl = document.getElementById("saveUserBtn");
+        if (inputEl) inputEl.value = getProfileUsername();
+        if (saveBtnEl && inputEl) {
+          saveBtnEl.addEventListener("click", function () {
+            var name = inputEl.value.trim();
+            setProfileUsername(name);
+            renderUserForm(name);
+          });
+        }
+      }
+    }
+    // Initial render based on stored username
+    renderUserForm(getProfileUsername());
+
+    // Audio controls: separate SFX and music toggles
+    var muteSfxBtn = document.getElementById("muteSfxBtn");
+    var muteMusicBtn = document.getElementById("muteMusicBtn");
+    if (muteSfxBtn) {
+      function updateSfxLabel() {
+        muteSfxBtn.textContent = isSfxEnabled() ? "\u{1F50A} FX" : "\u{1F507} FX";
+      }
+      updateSfxLabel();
+      muteSfxBtn.addEventListener("click", function () {
+        var enabled = !isSfxEnabled();
+        setSfxEnabled(enabled);
+        updateSfxLabel();
+      });
+    }
+    if (muteMusicBtn) {
+      function updateMusicLabel() {
+        muteMusicBtn.textContent = isMusicEnabled() ? "\u{1F50A}\u266A" : "\u{1F507}\u266A";
+      }
+      updateMusicLabel();
+      muteMusicBtn.addEventListener("click", function () {
+        var enabled = !isMusicEnabled();
+        setMusicEnabled(enabled);
+        updateMusicLabel();
+        var game = window.__dragonGame;
+        if (game && game.scene) {
+          var scene = game.scene.getScene("Game");
+          if (scene && scene.music) {
+            if (enabled) {
+              if (!scene.music.isPlaying) scene.music.play();
+              scene.music.setMute(false);
+            } else {
+              scene.music.setMute(true);
+            }
+          }
+        }
+      });
+    }
+
+    // Mobile audio unlock: resume Web Audio on first user interaction
+    window.addEventListener("pointerdown", function unlockAudio() {
+      var game = window.__dragonGame;
+      if (game && game.sound && game.sound.context && game.sound.context.state === "suspended") {
+        try { game.sound.context.resume(); } catch (e) {}
+      }
+      // Phaser also exposes an explicit unlock helper on some backends
+      if (game && game.sound && typeof game.sound.unlock === "function") {
+        try { game.sound.unlock(); } catch (e2) {}
+      }
+      window.removeEventListener("pointerdown", unlockAudio);
+    });
+
+    if (!loadLevelFromHash()) {
+      var select = document.getElementById("levelSelect");
+      var value = select && select.value ? select.value : "new";
+      if (value === "new") {
+        window.__dragonLevelData = buildLevelDataForRandom();
+      } else {
+        var data = loadAllLevels(WORLD_H);
+        var level = data.levels.find(function (l) { return l.id === value; });
+        if (level) window.__dragonLevelData = buildLevelDataFromStored(level);
+        else window.__dragonLevelData = buildLevelDataForRandom();
+      }
+    }
+
+    // Keyboard
+    window.addEventListener("keydown", function (e) {
+      var keys = window.__dragonKeys;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = true;
+      if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = true;
+      if (e.code === "ArrowDown" || e.code === "KeyS") keys.down = true;
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") keys.jump = true;
+      if (e.code === "KeyF") keys.boost = true;
+      if (e.code === "KeyG") keys.breath = true;
+      // Prevent Space and arrow keys from triggering focused buttons/scroll
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown" || e.code === "ArrowLeft" || e.code === "ArrowRight") {
+        if (e.preventDefault) e.preventDefault();
+      }
+    });
+    window.addEventListener("keyup", function (e) {
+      var keys = window.__dragonKeys;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") keys.left = false;
+      if (e.code === "ArrowRight" || e.code === "KeyD") keys.right = false;
+      if (e.code === "ArrowDown" || e.code === "KeyS") keys.down = false;
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+        keys.jump = false;
+        window.__dragonJumpKeyReleased = true;
+      }
+      if (e.code === "KeyF") keys.boost = false;
+      if (e.code === "KeyG") {
+        keys.breath = false;
+        window.__dragonBreathKeyConsumed = false;
+      }
+    });
+
+    // On-screen buttons (mobile-friendly, stable press/hold)
+    function bindBtn(id, keyName) {
+      var btn = document.getElementById(id);
+      if (!btn) return;
+      var activePointerId = null;
+
+      btn.addEventListener("pointerdown", function (e) {
+        e.preventDefault();
+        activePointerId = e.pointerId;
+        window.__dragonKeys[keyName] = true;
+        if (btn.setPointerCapture) {
+          try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+      });
+
+      function clearForPointer(e) {
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
+        e.preventDefault();
+        window.__dragonKeys[keyName] = false;
+        activePointerId = null;
+        if (btn.releasePointerCapture) {
+          try { btn.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener("pointerup", clearForPointer);
+      btn.addEventListener("pointercancel", clearForPointer);
+      // We intentionally do NOT clear on pointerleave so minor thumb drift
+      // doesn't stop movement; release happens only on up/cancel.
+    }
+    bindBtn("btnLeft", "left");
+    bindBtn("btnDown", "down");
+    bindBtn("btnRight", "right");
+    bindBtn("btnJump", "jump");
+    bindBtn("btnBoost", "boost");
+    bindBtn("btnBreath", "breath");
+    document.getElementById("btnJump") && document.getElementById("btnJump").addEventListener("pointerup", function () { window.__dragonJumpKeyReleased = true; });
+    document.getElementById("btnJump") && document.getElementById("btnJump").addEventListener("pointerleave", function () { window.__dragonJumpKeyReleased = true; });
+    document.getElementById("btnBreath") && document.getElementById("btnBreath").addEventListener("pointerup", function () { window.__dragonBreathKeyConsumed = false; });
+    document.getElementById("btnBreath") && document.getElementById("btnBreath").addEventListener("pointerleave", function () { window.__dragonBreathKeyConsumed = false; });
+
+    // Level select change
+    document.getElementById("levelSelect").addEventListener("change", function (e) {
+      var value = e.target.value;
+      var data = loadAllLevels(WORLD_H);
+      if (value === "new") {
+        // Pure random level: use original generator, clear hash.
+        window.__dragonLevelData = buildLevelDataForRandom();
+        location.hash = "";
+      } else {
+        var level = data.levels.find(function (l) { return l.id === value; });
+        if (level) {
+          window.__dragonLevelData = buildLevelDataFromStored(level);
+          var ld = window.__dragonLevelData;
+          if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
+            var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
+            var b = (ld.biomeId && ld.biomeId !== "default") ? ("/" + ld.biomeId) : "";
+            location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "") + b;
+          } else {
+            location.hash = "";
+          }
+        }
+      }
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
+      startOrRestartGame();
+    });
+
+    var playedSelect = document.getElementById("playedSelect");
+    if (playedSelect) {
+      playedSelect.addEventListener("change", function (e) {
+        var v = e.target.value || "";
+        if (!v) return;
+        var parts = v.split("/");
+        var seed = parseInt(parts[0], 10);
+        var diff = parts.length > 1 ? parseInt(parts[1], 10) : 15;
+        if (!seed || seed <= 0 || isNaN(diff)) return;
+        if (diff < 1 || diff > 30) diff = 15;
+        window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+        var biomeForPlayed = getSelectedBiomeId();
+        location.hash = seed + "/" + diff + (biomeForPlayed && biomeForPlayed !== "default" ? ("/" + biomeForPlayed) : "");
+        var overlay = document.getElementById("winOverlay");
+        if (overlay) overlay.style.display = "none";
+        startOrRestartGame();
+      });
+    }
+
+    document.getElementById("newLevelBtn").addEventListener("click", function () {
+      // New level: seed is random; difficulty comes from dropdown ("random" uses original generator).
+      var diffVal = getSelectedDifficultyValue();
+      if (diffVal === "random") {
+        window.__dragonLevelData = buildLevelDataForRandom();
+        location.hash = "";
+      } else {
+        var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+        var seed = Math.floor(Math.random() * 1000000000) + 1;
+        window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+        var biomeForNewLevel = getSelectedBiomeId();
+        location.hash = seed + "/" + diff + (biomeForNewLevel && biomeForNewLevel !== "default" ? ("/" + biomeForNewLevel) : "");
+      }
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
+      startOrRestartGame();
+    });
+
+    document.getElementById("restartLevelBtn").addEventListener("click", function () {
+      var overlay = document.getElementById("winOverlay");
+      if (overlay) overlay.style.display = "none";
+      window.__dragonRestartingSameLevel = true;
+      startOrRestartGame();
+    });
+
+    document.getElementById("shareBtn").addEventListener("click", function () {
+      var data = window.__dragonLevelData;
+      var seed = data && data.currentLevelSeed;
+      if (seed == null || seed <= 0) {
+        window.alert("This level cannot be shared by link.");
+        return;
+      }
+      var difficulty = (data && data.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(data.currentDifficulty))) : null;
+      var biomeId = (data && data.biomeId) || "default";
+      var url = location.origin + location.pathname + "#" + seed + (difficulty != null ? "/" + difficulty : "") + (biomeId && biomeId !== "default" ? ("/" + biomeId) : "");
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function () {
+          var btn = document.getElementById("shareBtn");
+          btn.classList.add("share-copied");
+          setTimeout(function () { btn.classList.remove("share-copied"); }, 600);
+        }).catch(function () {
+          window.prompt("Copy this link:", url);
+        });
+      } else {
+        window.prompt("Copy this link:", url);
+      }
+    });
+
+    function escapeHtmlInstructions(s) {
+      if (s == null || s === "") return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function getInstructionsLevelContext() {
+      var scene = window.__dragonGame && window.__dragonGame.scene && window.__dragonGame.scene.getScene("Game");
+      var ld = window.__dragonLevelData;
+      var biomeId = "default";
+      var levelId = null;
+      var difficulty = null;
+      if (scene && scene.biomeId != null) {
+        biomeId = (scene.biomeId === "desert" || scene.biomeId === "ocean") ? scene.biomeId : "default";
+        levelId = scene.currentLevelID;
+        difficulty = scene.currentDifficulty;
+      } else if (ld) {
+        biomeId = (ld.biomeId === "desert" || ld.biomeId === "ocean") ? ld.biomeId : "default";
+        levelId = ld.currentLevelID;
+        difficulty = ld.currentDifficulty;
+      } else {
+        biomeId = getSelectedBiomeId();
+      }
+      return { biomeId: biomeId, levelId: levelId, difficulty: difficulty };
+    }
+
+    function refreshInstructionsForCurrentLevel() {
+      var introEl = document.getElementById("instructionsIntro");
+      var contentEl = document.getElementById("instructionsContentRoot");
+      if (!contentEl) return;
+      var ctx = getInstructionsLevelContext();
+      var biomeLabel = ctx.biomeId === "ocean" ? "Ocean" : ctx.biomeId === "desert" ? "Desert" : "Cave";
+      contentEl.className = "instructions-content instructions-context-" + ctx.biomeId;
+      var levelName = ctx.levelId ? getLevelDisplayName(ctx.levelId) : "";
+      var diffNum = (ctx.difficulty != null && typeof ctx.difficulty === "number" && isFinite(ctx.difficulty))
+        ? Math.max(1, Math.min(30, Math.floor(ctx.difficulty)))
+        : null;
+      var diffStr = diffNum != null ? "Difficulty <strong>" + diffNum + "</strong>" : "";
+      if (introEl) {
+        if (ctx.levelId) {
+          introEl.innerHTML =
+            "You’re playing <strong>" + escapeHtmlInstructions(levelName) + "</strong> — <strong>" + biomeLabel + "</strong>" +
+            (diffStr ? " — " + diffStr : "") +
+            ". Hazards and power-ups below match <strong>this level</strong>.";
+        } else {
+          introEl.innerHTML =
+            "No level loaded yet — tips below use the <strong>" + biomeLabel + "</strong> biome " +
+            "(from the menu or your last selection). Start a run to lock help to the exact level.";
+        }
+      }
+    }
+
+    window.__dragonRefreshInstructions = refreshInstructionsForCurrentLevel;
+
+    function getLevelDisplayName(levelId) {
+      if (!levelId) return "Level";
+      var data = loadAllLevels(WORLD_H);
+      var level = data.levels && data.levels.find(function (l) { return l.id === levelId; });
+      if (level && level.name) return level.name;
+      var ld = window.__dragonLevelData;
+      if (ld && ld.currentLevelID === levelId) {
+        if (ld.currentLevelSeed != null && ld.currentLevelSeed > 0) {
+          var diff = ld.currentDifficulty != null ? " (Diff " + Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) + ")" : "";
+          var biome = (ld.biomeId && ld.biomeId !== "default") ? (" " + ld.biomeId.charAt(0).toUpperCase() + ld.biomeId.slice(1)) : "";
+          return "Seed " + ld.currentLevelSeed + diff + biome;
+        }
+        return "Random level";
+      }
+      if (String(levelId).indexOf("seed-") === 0) return levelId.replace("seed-", "Seed ");
+      if (String(levelId).indexOf("rand-") === 0) return "Random level";
+      return levelId;
+    }
+
+    function showLeaderboardForLevel(levelId) {
+      var overlay = document.getElementById("leaderboardOverlay");
+      var nameEl = document.getElementById("leaderboardLevelName");
+      var contentEl = document.getElementById("leaderboardContent");
+      var emptyEl = document.getElementById("leaderboardEmpty");
+      if (!overlay || !contentEl) return;
+      if (!levelId || levelId === "new") {
+        window.alert("Start or select a level to view its leaderboard.");
+        return;
+      }
+      var levelName = getLevelDisplayName(levelId);
+      if (nameEl) nameEl.textContent = levelName;
+      var list = getLevelLeaderboard(levelId);
+      if (list.length === 0) {
+        contentEl.innerHTML = "";
+        if (emptyEl) emptyEl.style.display = "block";
+      } else {
+        if (emptyEl) emptyEl.style.display = "none";
+        var html = "<table><thead><tr><th>#</th><th>Player</th><th>Score</th><th>Time</th></tr></thead><tbody>";
+        for (var i = 0; i < list.length; i++) {
+          var row = list[i];
+          var user = (row.userId || "anonymous").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          var timeStr = (typeof row.time === "number" && isFinite(row.time) && row.time > 0) ? row.time.toFixed(2) + "s" : "--";
+          html += "<tr><td>" + (i + 1) + "</td><td>" + user + "</td><td>" + row.score + "</td><td>" + timeStr + "</td></tr>";
+        }
+        html += "</tbody></table>";
+        contentEl.innerHTML = html;
+      }
+      overlay.style.display = "flex";
+    }
+
+    document.getElementById("leaderboardBtn").addEventListener("click", function () {
+      var scene = window.__dragonGame && window.__dragonGame.scene.getScene("Game");
+      var levelId = (scene && scene.currentLevelID) ? scene.currentLevelID : null;
+      if (!levelId) {
+        var select = document.getElementById("levelSelect");
+        levelId = select ? select.value : "";
+      }
+      showLeaderboardForLevel(levelId);
+    });
+
+    var leaderboardCloseBtn = document.getElementById("leaderboardCloseBtn");
+    if (leaderboardCloseBtn) {
+      leaderboardCloseBtn.addEventListener("click", function () {
+        var overlay = document.getElementById("leaderboardOverlay");
+        if (overlay) overlay.style.display = "none";
+      });
+    }
+
+    var instructionsBtn = document.getElementById("instructionsBtn");
+    if (instructionsBtn) {
+      instructionsBtn.addEventListener("click", function () {
+        refreshInstructionsForCurrentLevel();
+        var overlay = document.getElementById("instructionsOverlay");
+        if (overlay) overlay.style.display = "flex";
+      });
+    }
+    var instructionsCloseBtn = document.getElementById("instructionsCloseBtn");
+    if (instructionsCloseBtn) {
+      instructionsCloseBtn.addEventListener("click", function () {
+        var overlay = document.getElementById("instructionsOverlay");
+        if (overlay) overlay.style.display = "none";
+      });
+    }
+
+    var cheatOverlay = document.getElementById("cheatOverlay");
+    var cheatInput = document.getElementById("cheatInput");
+    var cheatForm = document.getElementById("cheatForm");
+    var cheatMessage = document.getElementById("cheatMessage");
+    var cheatCloseBtn = document.getElementById("cheatCloseBtn");
+    function openCheatPanel() {
+      if (cheatOverlay) {
+        cheatOverlay.style.display = "flex";
+        if (cheatInput) {
+          cheatInput.value = "";
+          cheatInput.focus();
+        }
+        if (cheatMessage) {
+          cheatMessage.textContent = "";
+          cheatMessage.className = "cheat-message";
+        }
+      }
+    }
+    function closeCheatPanel() {
+      if (cheatOverlay) cheatOverlay.style.display = "none";
+    }
+    window.addEventListener("keydown", function (e) {
+      if (e.key === "`" || e.key === "~") {
+        if (cheatOverlay && cheatOverlay.style.display === "flex") {
+          closeCheatPanel();
+          e.preventDefault();
+        } else {
+          openCheatPanel();
+          e.preventDefault();
+        }
+      }
+      if (e.key === "Escape" && cheatOverlay && cheatOverlay.style.display === "flex") {
+        closeCheatPanel();
+        e.preventDefault();
+      }
+    });
+    if (cheatForm && cheatInput && cheatMessage) {
+      cheatForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var code = cheatInput.value.trim();
+        var scene = window.__dragonGame && window.__dragonGame.scene.getScene("Game");
+        if (!scene) {
+          cheatMessage.textContent = "Start a level first.";
+          cheatMessage.className = "cheat-message err";
+          return;
+        }
+        var msg = scene.applyCheat(code);
+        cheatMessage.textContent = msg;
+        cheatMessage.className = "cheat-message " + (msg.indexOf("Unknown") !== -1 || msg.indexOf("Enter") !== -1 || msg.indexOf("Desert") !== -1 ? "err" : "ok");
+        cheatInput.value = "";
+      });
+    }
+    if (cheatCloseBtn) cheatCloseBtn.addEventListener("click", closeCheatPanel);
+    var cheatsBtn = document.getElementById("cheatsBtn");
+    if (cheatsBtn) cheatsBtn.addEventListener("click", openCheatPanel);
+
+    document.getElementById("winNextLevelBtn").addEventListener("click", function () {
+      var data = loadAllLevels(WORLD_H);
+      if (!data.levels.length) return;
+      var scene = window.__dragonGame && window.__dragonGame.scene.getScene("Game");
+      var currentID = scene ? scene.currentLevelID : null;
+      var idx = data.levels.findIndex(function (l) { return l.id === currentID; });
+      var nextLevel = (idx >= 0 && idx < data.levels.length - 1) ? data.levels[idx + 1] : data.levels[0];
+      window.__dragonLevelData = buildLevelDataFromStored(nextLevel);
+      var ld = window.__dragonLevelData;
+        if (ld && ld.currentLevelSeed && ld.currentLevelSeed > 0) {
+          var d = (ld.currentDifficulty != null) ? Math.max(1, Math.min(30, Math.floor(ld.currentDifficulty))) : null;
+          var b = (ld.biomeId && ld.biomeId !== "default") ? ("/" + ld.biomeId) : "";
+          location.hash = ld.currentLevelSeed + (d != null ? "/" + d : "") + b;
+      } else {
+        location.hash = "";
+      }
+      document.getElementById("winOverlay").style.display = "none";
+      startOrRestartGame();
+    });
+
+    var winNewLevelBtn = document.getElementById("winNewLevelBtn");
+    if (winNewLevelBtn) {
+      winNewLevelBtn.addEventListener("click", function () {
+        var diffVal = getSelectedDifficultyValue();
+        if (diffVal === "random") {
+          window.__dragonLevelData = buildLevelDataForRandom();
+          location.hash = "";
+        } else {
+          var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+          var seed = Math.floor(Math.random() * 1000000000) + 1;
+          window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+          var biomeForWinNew = getSelectedBiomeId();
+          location.hash = seed + "/" + diff + (biomeForWinNew && biomeForWinNew !== "default" ? ("/" + biomeForWinNew) : "");
+        }
+        document.getElementById("winOverlay").style.display = "none";
+        startOrRestartGame();
+      });
+    }
+
+    var winCloseBtn = document.getElementById("winCloseBtn");
+    if (winCloseBtn) {
+      winCloseBtn.addEventListener("click", function () {
+        var diffVal = getSelectedDifficultyValue();
+        if (diffVal === "random") {
+          window.__dragonLevelData = buildLevelDataForRandom();
+          location.hash = "";
+        } else {
+          var diff = Math.max(1, Math.min(30, parseInt(diffVal, 10) || 1));
+          var seed = Math.floor(Math.random() * 1000000000) + 1;
+          window.__dragonLevelData = buildLevelDataForNewSeed(seed, diff);
+          var biomeForWinClose = getSelectedBiomeId();
+          location.hash = seed + "/" + diff + (biomeForWinClose && biomeForWinClose !== "default" ? ("/" + biomeForWinClose) : "");
+        }
+        document.getElementById("winOverlay").style.display = "none";
+        startOrRestartGame();
+      });
+    }
+
+    document.getElementById("winReplayBtn").addEventListener("click", function () {
+      if (window.__dragonGame && window.__dragonGame.scene.getScene("Game")) {
+        window.__dragonGame.scene.getScene("Game").lastCheckpointIndex = -1;
+        window.__dragonGame.scene.getScene("Game").lives = LIVES_START;
+      }
+      document.getElementById("winOverlay").style.display = "none";
+      window.__dragonRestartingSameLevel = true;
+      startOrRestartGame();
+    });
+
+    window.addEventListener("hashchange", function () {
+      if (loadLevelFromHash()) startOrRestartGame();
+    });
+
+    var config = {
+      type: Phaser.AUTO,
+      parent: "phaser-game",
+      width: 640,
+      height: 360,
+      backgroundColor: "#1a1a2e",
+      physics: {
+        default: "arcade",
+        arcade: {
+          gravity: { y: gravity },
+          debug: false
+        }
+      },
+      scene: GameScene
+    };
+    window.__dragonGame = new Phaser.Game(config);
+    setTimeout(function () {
+      refreshInstructionsForCurrentLevel();
+    }, 0);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();

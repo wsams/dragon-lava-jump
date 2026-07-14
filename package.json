@@ -1,0 +1,26 @@
+{
+  "name": "dragon-lava-jump",
+  "version": "1.2.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wsams/dragon-lava-jump.git"
+  },
+  "scripts": {
+    "minify": "terser js/game-phaser.js -o js/main.min.js -c -m",
+    "prepare": "husky",
+    "test": "node test/smoke.test.mjs",
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.9",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/release-notes-generator": "^14.1.1",
+    "husky": "^9.1.7",
+    "semantic-release": "^25.0.7",
+    "terser": "^5.49.0"
+  }
+}

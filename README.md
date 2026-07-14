@@ -1,208 +1,79 @@
-# Dragon Lava Jump 🐉🔥
+# Dragon Lava Jump
 
-A challenging side-scrolling platformer game written in pure HTML, CSS, and JavaScript. Control a dragon through procedurally generated levels filled with lava, enemies, and collectibles!
+[![Play now — leap the lava!](https://img.shields.io/badge/Play_now-Leap_the_lava!-e85d04?style=for-the-badge&labelColor=1a1a2e)](https://wsams.github.io/dragon-lava-jump/)
 
-## 🎮 About The Game
+A side-scrolling platformer in which you guide a dragon across platforms, over lava, past enemies, and to the golden door. Built with **HTML**, **CSS**, **JavaScript**, and **Phaser 3**.
 
-Dragon Lava Jump is a fast-paced platformer where you guide a dragon through treacherous levels filled with rising lava, flying bats, jumping slimes, crawling enemies, and dangerous stalactites. Your mission is to reach the golden pillar at the end of each level while collecting all 30 dots and avoiding deadly obstacles.
+**[Play in your browser →](https://wsams.github.io/dragon-lava-jump/)** — no install, just jump in and chase that golden door.
 
-### Features
+![Dragon Lava Jump gameplay — green dragon on purple platforms with on-screen touch controls](assets/screenshot.png)
 
-- **Procedurally Generated Levels**: Each level is uniquely generated with a seed-based system
-- **Multiple Abilities**: 
-  - Double jump for aerial maneuvers
-  - Mid-air boost for extra distance
-  - Fire breath to defeat enemies (when powered up)
-- **Dynamic Gameplay Elements**:
-  - Rising lava that keeps you moving
-  - Checkpoint poles to save progress
-  - Power-ups including fire totems and lava bounce orbs
-  - Falling platforms that add challenge
-- **Enemy Variety**: 
-  - Slimes that jump around
-  - Flying bats that pursue you
-  - Crawlers that patrol platforms
-  - Deadly stalactites hanging from the ceiling
-- **Level Sharing**: Share levels via URL with difficulty settings
-- **Persistent Progress**: Your best times and dot collections are saved locally
-- **Responsive Controls**: Keyboard controls and on-screen touch buttons for mobile
+## About the game
 
-## 🚀 Installation
+- **Goal:** Reach the golden door at the end of the level before running out of lives. Collect dots, avoid or defeat slimes, bats, and crawlers, and use lava bounces and power-ups to get ahead. You can hold only one power-up at a time (lava orb, fire totem, or in Desert the chomp power-up); picking up a new one replaces the previous. **Score** is earned from dots, creature kills, power-ups, and winning; higher difficulty multiplies points. Scores are stored per level per user (or "anonymous" if not signed in).
+- **Movement:** Run left/right, jump (including double jump in mid-air), slam down (hold Down/S in the air to drop fast), and use an air boost to dash forward. Fire breath can defeat slimes and crawlers when you have the fire totem.
+- **Hazards:** Lava (instant death unless you have a lava bounce), slimes, bats, crawlers, and stalactites. Checkpoints and extra lives help you progress.
+- **Levels:** Play random generated levels or saved levels. Difficulty affects platform layout, enemies, and items (e.g. lava bounce, fire totem; Desert also has the chomp power-up).
+- **Instructions:** The menu **Instructions** button opens a dialog with “How to play”—keyboard and on-screen controls, goal, and biome-specific hazards. The page footer links back to this GitHub repo and credits Phaser.
 
-No installation required! Dragon Lava Jump runs entirely in your web browser.
+## How to run
 
-### Quick Start
+Open `index.html` in a browser, or serve the project folder with any static file server (e.g. `npx serve .` or `python -m http.server`) and open the page. Audio may require a user gesture (e.g. click or tap) before playing in some browsers.
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/wsams/dragon-lava-jump.git
-   cd dragon-lava-jump
-   ```
+No PHP or other server backend is required. On load the game probes for an optional API (`api/health` / `api/health.php`). If none responds — including on **GitHub Pages** and other static hosts — it runs in **local mode** and stores profile, scores, levels, audio, difficulty, and biome in `localStorage` so the game is fully playable on a plain web server. Force local mode with `?backend=local`.
 
-2. Open the game in your browser:
-   ```bash
-   # Simply open the HTML file in any modern web browser
-   open dragonlavajump.html
-   # Or on Linux:
-   xdg-open dragonlavajump.html
-   # Or on Windows:
-   start dragonlavajump.html
-   ```
+### GitHub Pages
 
-3. That's it! Start playing!
+Play URL: `https://wsams.github.io/dragon-lava-jump/`
 
-### Hosting Online
+A workflow (`.github/workflows/pages.yml`) deploys the static site on every push to `main` (and via **Actions → Deploy GitHub Pages → Run workflow**).
 
-To host the game on a web server:
+**One-time setup (required):** Pages is not on by default. A repo admin must enable it once:
 
-1. Upload all files to your web server, maintaining the directory structure
-2. Ensure `dragonlavajump.html` is accessible
-3. No server-side processing required - it's all client-side JavaScript!
+1. Open [Settings → Pages](https://github.com/wsams/dragon-lava-jump/settings/pages)
+2. Under **Build and deployment → Source**, choose **GitHub Actions**
+3. Re-run the **Deploy GitHub Pages** workflow (or push to `main`)
 
-## 🎯 How To Play
+Until that is done, `https://wsams.github.io/dragon-lava-jump/` returns 404 and the deploy workflow fails at “Setup Pages”.
 
-### Objective
+Scores and progress on Pages are per-browser (localStorage), not shared across devices.
 
-- **Primary Goal**: Reach the golden pillar at the end of the level
-- **Secondary Goal**: Collect all 30 dots (Pac-Man style) for the best score
-- **Avoid**: Touching lava (instant death), enemies (resets to checkpoint), and stalactites
+## Controls
 
-### Controls
+- **Arrow keys / A,D:** Move left and right  
+- **Down arrow / S:** Slam down (in the air only—drop straight down at a fast speed, Tetris-style)  
+- **Space:** Jump (double jump allowed once per air time)  
+- **F:** Air boost (forward dash in the air, once per jump)  
+- **G:** Fire breath (when you have the fire totem)  
+- **On-screen buttons (touch):** Left, Right, Down (slam), Breath (flame icon), Jump (up arrow), and Boost (left–right arrows). Buttons use **icons only** (no text labels) so holding a button doesn’t trigger OS text selection. Full controls and goal text are in the **Instructions** dialog (menu button).
 
-#### Keyboard Controls (Desktop)
-- **← →** (Arrow Keys): Move left and right
-- **Space**: Jump (press again in air for double jump)
-- **F**: Boost (once per jump, only works in air)
-- **G**: Fire breath (requires fire totem power-up)
+## Credits
 
-#### Touch Controls (Mobile/Tablet)
-Use the on-screen buttons at the bottom of the game:
-- **Left/Right**: Movement buttons
-- **Jump**: Jump button (tap again in air for double jump)
-- **Boost**: Mid-air boost button
-- **Breath**: Fire breath button
+- **Audio**
+  - music.mp3 (Sound Effect by freesound_community from Pixabay)
+  - jump.mp3 (https://sounddino.com/en/effects/arcade/ - Jump in the game)
+  - death.mp3 (https://sounddino.com/en/effects/arcade/ - Level failed)
+  - lava.mp3 (https://sounddino.com/en/search/?s=lava - Lava)
+  - shield-loss.mp3 (https://sounddino.com/en/effects/arcade/ - Hit an obstacle)
+  - bat.mp3 (https://sounddino.com/en/effects/arcade/ - space creak)
+  - crawler.mp3 (https://sounddino.com/en/effects/arcade/ - fast travel)
+  - slime.mp3 (https://sounddino.com/en/effects/arcade/ - Shot with vibration)
+  - breath.mp3 (https://sounddino.com/en/effects/arcade/ - Space buzz)
+  - win.mp3 (https://sounddino.com/en/effects/game-alerts/ - Successfully completed a level)
+  - platform-step.mp3 (https://sounddino.com/en/effects/arcade/ - thumping sound)
+  - platform-fall.mp3 (https://sounddino.com/en/effects/arcade/ - Sound for an arcade game (Arcade Chirp Descend))
+  - boost.mp3 (https://sounddino.com/en/effects/effects/ - Strong mace strike)
+  - dot.mp3 (https://sounddino.com/en/effects/drops/ - water drop soft calm close)
+  - checkpoint.mp3 (https://sounddino.com/en/effects/arcade/ - Sound for an arcade game (Arcade Alarm))
+- Biomes
+  - Desert
+    - **Audio**
+      - music.mp3 (Music by [Vlad Krotov](https://pixabay.com/users/moodmode-33139253/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428) from [Pixabay](https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=294428))
+      - chomp.mp3 (Sound Effect by [freesound_community](https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=92106) from [Pixabay](https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=92106))
+      - cactus.mp3 (Sound Effect by [floraphonic](https://pixabay.com/users/floraphonic-38928062/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=218519) from [Pixabay](https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=218519))
+      - scorpion.mp3 (Sound Effect by [Yodguard](https://pixabay.com/users/yodguard-12455005/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=482550) from [Pixabay](https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=482550))
+- **Images**
+      - buzzard.mp3 (Sound Effect by [DRAGON-STUDIO](https://pixabay.com/users/dragon-studio-38165424/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=463212) from [Pixabay](https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=463212))
+  - dragon.ico (https://icon-icons.com/icon/dragon-face/98751 - Dragon face - Free Icon in PNG and SVG By Google)
 
-### Game Mechanics
-
-#### Lives & Checkpoints
-- You start with 3 lives
-- Touch checkpoint poles to save your progress
-- Dying sends you back to the last checkpoint
-- Losing all lives restarts the level
-
-#### Power-Ups
-- **Fire Totem** (flame icon): Grants unlimited fire breath until you're hit
-  - Fire breath defeats enemies on contact
-  - One hit removes the power-up
-- **Orange Orb**: Allows you to bounce on lava once
-- **Checkpoint Poles**: Touch to set your respawn point
-
-#### Enemies
-- **Slimes**: Jump around on platforms - avoid touching them
-- **Bats**: Fly through the air and chase you
-- **Crawlers**: Patrol around platforms in a loop
-- **Stalactites**: Hanging from the ceiling - don't touch!
-
-#### Platform Types
-- **Solid Platforms**: Normal platforms you can stand on
-- **Falling Platforms**: Drop shortly after you step on them
-
-#### Scoring
-- Complete the level as fast as possible
-- Collect all 30 dots for maximum points
-- Your best time and dot count are saved per level
-
-### Menu Options
-
-- **Level Dropdown**: Select from previously played levels or generate new ones
-- **New Level Button**: Generate a new random level
-- **Share Button**: Copy a shareable link to the current level
-
-### URL Parameters
-
-Share specific levels using URL hash parameters:
-```
-dragonlavajump.html#<seed>/<difficulty>
-```
-- `seed`: Numerical seed for level generation
-- `difficulty`: 1-30 (optional, defaults to 15)
-
-Example: `dragonlavajump.html#12345/20`
-
-## 🛠️ Technical Details
-
-### Technologies Used
-- **HTML5**: Canvas API for rendering
-- **CSS3**: Styling and responsive design
-- **Vanilla JavaScript**: ES6+ modules for game logic
-- **LocalStorage API**: Saving progress and best scores
-
-### Project Structure
-
-```
-dragon-lava-jump/
-├── dragonlavajump.html       # Main HTML file
-├── dragonlavajump-css/       # Stylesheets
-│   └── styles.css            # Game styling
-├── dragonlavajump-js/        # JavaScript modules
-│   ├── main.js               # Entry point and game loop
-│   ├── state.js              # Game state management
-│   ├── constants.js          # Game constants and physics
-│   ├── input.js              # Input handling (keyboard/touch)
-│   ├── update.js             # Game update logic
-│   ├── draw.js               # Rendering logic
-│   ├── levelGen.js           # Procedural level generation
-│   ├── gameFlow.js           # Level loading and game flow
-│   ├── storage.js            # LocalStorage management
-│   └── rng.js                # Random number generator (seeded)
-└── README.md                 # This file
-```
-
-### Browser Compatibility
-
-Requires a modern web browser with support for:
-- HTML5 Canvas
-- ES6+ JavaScript modules
-- LocalStorage API
-- CSS3
-
-Tested on:
-- Chrome/Edge (Chromium-based)
-- Firefox
-- Safari
-
-### Performance
-
-The game includes an FPS benchmark system that automatically adjusts to your device's performance. It runs smoothly on most modern devices, including mobile phones and tablets.
-
-## 🎨 Customization
-
-Feel free to modify the game by editing the JavaScript modules:
-- Adjust physics constants in `constants.js`
-- Modify level generation in `levelGen.js`
-- Change visual appearance in `draw.js` and `styles.css`
-- Add new game mechanics by extending the modules
-
-## 📝 License
-
-This project is open source. Feel free to use, modify, and distribute as you see fit.
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to:
-- Report bugs
-- Suggest new features
-- Submit pull requests
-- Share your custom levels
-
-## 🎮 Tips & Tricks
-
-1. **Master the double jump**: Timing your second jump is crucial for reaching high platforms
-2. **Use boost wisely**: The mid-air boost recharges each time you land
-3. **Watch the lava**: It rises slowly but relentlessly - keep moving!
-4. **Checkpoint early**: Touch every checkpoint pole you see
-5. **Fire totem strategy**: When powered up, one hit kills enemies but also removes the power
-6. **Falling platforms**: Listen for the visual cue and jump quickly
-7. **Collect dots strategically**: Sometimes it's better to get the dots on your way back from a high platform
-
-Enjoy the game! 🐉
+This project is not licensed for reuse or distribution.

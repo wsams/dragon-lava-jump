@@ -1,0 +1,93 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build static site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm clean-install
+        env:
+          HUSKY: "0"
+
+      - name: Minify game script
+        run: npm run minify
+        env:
+          HUSKY: "0"
+
+      - name: Assemble Pages artifact
+        run: |
+          mkdir -p _site
+          cp index.html dragon.ico _site/
+          # Prefer the minified bundle on Pages when present.
+          if [ -f js/main.min.js ]; then
+            sed 's|js/game-phaser\.js|js/main.min.js|' index.html > _site/index.html
+          fi
+          touch _site/.nojekyll
+          cp -r css js assets _site/
+
+      - name: Setup Pages
+        id: configure_pages
+        continue-on-error: true
+        uses: actions/configure-pages@v6
+        with:
+          # Best-effort: requires a token that can administer Pages.
+          # Default GITHUB_TOKEN usually cannot enable Pages; see next step.
+          enablement: true
+
+      - name: Pages enablement required
+        if: steps.configure_pages.outcome != 'success'
+        run: |
+          {
+            echo "## GitHub Pages is not enabled"
+            echo ""
+            echo "The deploy workflow cannot publish until Pages is turned on once for this repo."
+            echo ""
+            echo "1. Open **[Settings → Pages](https://github.com/${{ github.repository }}/settings/pages)**"
+            echo "2. Under **Build and deployment → Source**, choose **GitHub Actions**"
+            echo "3. Re-run this workflow: Actions → Deploy GitHub Pages → Re-run all jobs"
+            echo ""
+            echo "Play URL after deploy: https://wsams.github.io/dragon-lava-jump/"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::GitHub Pages is not enabled. Open https://github.com/${{ github.repository }}/settings/pages and set Source to GitHub Actions, then re-run this workflow."
+          exit 1
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
